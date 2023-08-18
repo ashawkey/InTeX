@@ -14,7 +14,8 @@ import rembg
 from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
 
-from mesh import Mesh
+from grid_put import mipmap_linear_grid_put_2d
+from mesh import Mesh, safe_normalize
 
 class GUI:
     def __init__(self, opt):
@@ -76,95 +77,103 @@ class GUI:
         posi = self.guidance.get_text_embeds([self.prompt])
         self.guidance_embeds = torch.cat([nega] * self.opt.batch_size + [posi] * self.opt.batch_size, dim=0)
             
-    def train_step(self):
-        starter = torch.cuda.Event(enable_timing=True)
-        ender = torch.cuda.Event(enable_timing=True)
-        starter.record()
+    def generate(self, texture_size=512, render_resolution=512):
 
-        for _ in range(self.train_steps):
+        print(f'[INFO] start generation')
 
-            self.step += 1
-            step_ratio = min(1, self.step / 500)
+        # if self.guidance is None:
+        #     self.prepare_guidance()
+        
+        h = w = int(texture_size)
 
-            loss = 0
+        albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
+        cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
-            ### novel view (manual batch)
-            images = []
-            vers, hors, radii = [], [], []
-            for _ in range(self.opt.batch_size):
+        vers = [0, -45, 45]
+        hors = [0, 60, -60, 120, -120, 180]
+        # vers = [0,]
+        # hors = [0,]
 
-                # render random view
-                ver = np.random.randint(-30, 10)
-                hor = np.random.randint(-180, 180)
-                radius = self.opt.radius #+ np.random.random() # [r, r + 1]
+        for ver in vers:
+            for hor in hors:
 
-                vers.append(ver)
-                hors.append(hor)
-                radii.append(radius - self.opt.radius)
+                # render image
+                pose = orbit_camera(ver, hor, self.cam.radius)
 
-                pose = orbit_camera(ver, hor, radius)
                 mvp = self.cam.perspective @ np.linalg.inv(pose)
                 mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
 
-                # random resolution
-                ssaa = 2 # min(1.0, max(0.125, np.random.random()))
-                out = self.renderer.render(mvp, 256, 256, ssaa=ssaa)
+                ssaa = 1
+                out = self.renderer.render(mvp, render_resolution, render_resolution, ssaa=ssaa)
 
-                rand = np.random.random()
-                if True: #rand < 0.5:
-                    image = out["image"] # [H, W, 3] in [0, 1]
-                else:
-                    # random normal-consistency loss from TADA!
-                    mix_ratio = min(0.9, max(0.1, np.random.random()))
-                    image = mix_ratio * out["image"].detach() + (1 - mix_ratio) * out["normal"]
+                # draw mask
+                normal = out['normal'] * 2 - 1 # [H, W, 3]
+                xyzs = out['xyzs'] # [H, W, 3]
+                alpha = out['alpha'].squeeze() # [H, W]
+
+                viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
+                viewcos = torch.sum(normal * viewdir, dim=-1) # [H, W], in [-1, 1]
+
+                mask = (alpha > 0) & (viewcos > 0.5)  # [H, W]
+                mask = mask.view(-1)
+
+                # generate tex on current view [TODO: RUN SD]
+                cur_img = 1 - out['image'] # [H, W, 3]
+                print(f'[process] {ver} - {hor} {cur_img.shape}')
+
+                # grid put
+                uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
+                cur_img = cur_img.view(-1, 3)[mask]
+
+                cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(
+                    h, w,
+                    uvs[..., [1, 0]] * 2 - 1,
+                    cur_img,
+                    min_resolution=128,
+                    return_count=True,
+                )
                 
-                image = image.permute(2,0,1).contiguous().unsqueeze(0) # [1, 3, H, W] in [0, 1]
+                # albedo += cur_albedo
+                # cnt += cur_cnt
+                mask = cnt.squeeze(-1) < 0.5
+                albedo[mask] += cur_albedo[mask]
+                cnt[mask] += cur_cnt[mask]
+        
+        mask = cnt.squeeze(-1) > 0
+        albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
 
-                images.append(image)
-            
-            images = torch.cat(images, dim=0)
+        mask = mask.view(h, w)
 
-            # import kiui
-            # kiui.lo(hor, ver)
-            # kiui.vis.plot_image(image)
+        albedo = albedo.detach().cpu().numpy()
+        mask = mask.detach().cpu().numpy()
 
-            # guidance loss
-            if self.opt.guidance_model == 'zero123':
+        # dilate texture
+        # from sklearn.neighbors import NearestNeighbors
+        # from scipy.ndimage import binary_dilation, binary_erosion
 
-                refined_images = self.guidance.refine(self.guidance_embeds, images, vers, hors, radii)
-                loss = loss + F.mse_loss(images, refined_images)
-                # import kiui
-                # # print(vers, hors)
-                # kiui.vis.plot_image(images, refined_images)
+        # inpaint_region = binary_dilation(mask, iterations=32)
+        # inpaint_region[mask] = 0
 
-                # loss = loss + self.guidance.train_step(self.guidance_embeds, images, vers, hors, radii)
-            else:
-                loss = loss + self.guidance.train_step(self.guidance_embeds, images)
+        # search_region = mask.copy()
+        # not_search_region = binary_erosion(search_region, iterations=3)
+        # search_region[not_search_region] = 0
 
-            # optimize step
-            loss.backward()
-            self.optimizer.step()
-            self.optimizer.zero_grad()
+        # search_coords = np.stack(np.nonzero(search_region), axis=-1)
+        # inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
 
-        ender.record()
-        torch.cuda.synchronize()
-        t = starter.elapsed_time(ender)
+        # knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(
+        #     search_coords
+        # )
+        # _, indices = knn.kneighbors(inpaint_coords)
+
+        # albedo[tuple(inpaint_coords.T)] = albedo[
+        #     tuple(search_coords[indices[:, 0]].T)
+        # ]
+
+        self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
+        print(f'[INFO] finished generation')
 
         self.need_update = True
-
-        if not self.wogui:
-            dpg.set_value("_log_train_time", f"{t:.4f}ms")
-            dpg.set_value(
-                "_log_train_log",
-                f"step = {self.step: 5d} (+{self.train_steps: 2d}) loss = {loss.item():.4f}",
-            )
-
-        # dynamic train steps (no need for now)
-        # max allowed train time per-frame is 500 ms
-        # full_t = t / self.train_steps * 16
-        # train_steps = min(16, max(4, int(16 * 500 / full_t)))
-        # if train_steps > self.train_steps * 1.2 or train_steps < self.train_steps * 0.8:
-        #     self.train_steps = train_steps
 
     @torch.no_grad()
     def test_step(self):
@@ -286,7 +295,6 @@ class GUI:
                 )
 
                 # prompt stuff
-            
                 dpg.add_input_text(
                     label="prompt",
                     default_value=self.prompt,
@@ -302,6 +310,20 @@ class GUI:
                         user_data="negative_prompt",
                     )
 
+                # generate texture
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Generate: ")
+
+                    def callback_generate(sender, app_data):
+                        self.generate()
+
+                    dpg.add_button(
+                        label="gen",
+                        tag="_button_gen",
+                        callback=callback_generate,
+                    )
+                    dpg.bind_item_theme("_button_gen", theme_button)
+                
                 # save current model
                 with dpg.group(horizontal=True):
                     dpg.add_text("Save: ")

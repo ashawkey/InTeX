@@ -52,30 +52,12 @@ class Renderer(nn.Module):
             self.glctx = dr.RasterizeGLContext()
         else:
             self.glctx = dr.RasterizeCudaContext()
-        
-        # extract trainable parameters
-        self.v_offsets = nn.Parameter(torch.zeros_like(self.mesh.v))
-        self.raw_albedo = nn.Parameter(trunc_rev_sigmoid(self.mesh.albedo))
 
-
-    def get_params(self):
-
-        params = [
-            {'params': self.raw_albedo, 'lr': self.opt.feature_lr},
-        ]
-
-        if not self.opt.lock_geo:
-            params.append({'params': self.v_offsets, 'lr': self.opt.position_lr})
-
-        return params
 
     @torch.no_grad()
     def export_mesh(self, save_path):
-        self.mesh.v = (self.mesh.v + self.v_offsets).detach()
-        self.mesh.albedo = torch.sigmoid(self.raw_albedo.detach())
         self.mesh.write(save_path)
 
-    
     def render(self, mvp, h0, w0, ssaa=1, bg_color=1):
         # mvp: [4, 4]
 
@@ -89,10 +71,7 @@ class Renderer(nn.Module):
         results = {}
 
         # get v
-        if not self.opt.lock_geo:
-            v = self.mesh.v + self.v_offsets # [N, 3]
-        else:
-            v = self.mesh.v
+        v = self.mesh.v
 
         # get v_clip and render rgb
         v_clip = torch.matmul(F.pad(v, pad=(0, 1), mode='constant', value=1.0), torch.transpose(mvp, 0, 1)).float().unsqueeze(0) # [1, N, 4]
@@ -102,30 +81,17 @@ class Renderer(nn.Module):
         alpha = (rast[..., 3:] > 0).float()
 
         texc, texc_db = dr.interpolate(self.mesh.vt.unsqueeze(0).contiguous(), rast, self.mesh.ft, rast_db=rast_db, diff_attrs='all')
-        albedo = dr.texture(self.raw_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear') # [1, H, W, 3]
-
-        albedo = torch.sigmoid(albedo)
+        albedo = dr.texture(self.mesh.albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear') # [1, H, W, 3]
         albedo = torch.where(rast[..., 3:] > 0, albedo, torch.tensor(0).to(albedo.device)) # remove background
 
         # get vn and render normal
-        if not self.opt.lock_geo:
-            i0, i1, i2 = self.mesh.f[:, 0].long(), self.mesh.f[:, 1].long(), self.mesh.f[:, 2].long()
-            v0, v1, v2 = v[i0, :], v[i1, :], v[i2, :]
-
-            face_normals = torch.cross(v1 - v0, v2 - v0)
-            face_normals = safe_normalize(face_normals)
-            
-            vn = torch.zeros_like(v)
-            vn.scatter_add_(0, i0[:, None].repeat(1,3), face_normals)
-            vn.scatter_add_(0, i1[:, None].repeat(1,3), face_normals)
-            vn.scatter_add_(0, i2[:, None].repeat(1,3), face_normals)
-
-            vn = torch.where(torch.sum(vn * vn, -1, keepdim=True) > 1e-20, vn, torch.tensor([0.0, 0.0, 1.0], dtype=torch.float32, device=vn.device))
-        else:
-            vn = self.mesh.vn
+        vn = self.mesh.vn
         
         normal, _ = dr.interpolate(vn.unsqueeze(0).contiguous(), rast, self.mesh.fn)
         normal = safe_normalize(normal[0])
+
+        # get positions
+        xyzs, _ = dr.interpolate(v.unsqueeze(0).contiguous(), rast, self.mesh.f)
 
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
@@ -140,10 +106,14 @@ class Renderer(nn.Module):
             alpha = scale_img_hwc(alpha, (h0, w0))
             depth = scale_img_hwc(depth, (h0, w0))
             normal = scale_img_hwc(normal, (h0, w0))
+            xyzs = scale_img_hwc(xyzs, (h0, w0))
+            texc = scale_img_hwc(texc, (h0, w0))
 
         results['image'] = albedo
         results['alpha'] = alpha
         results['depth'] = depth
+        results['xyzs'] = xyzs
         results['normal'] = (normal + 1) / 2
+        results['uvs'] = texc
 
         return results
