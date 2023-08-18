@@ -121,7 +121,7 @@ class GUI:
                 viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
                 viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
 
-                mask = (alpha > 0) & (viewcos > 0.5)  # [H, W]
+                mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
                 mask = mask.view(-1)
 
                 # generate tex on current view
@@ -151,11 +151,11 @@ class GUI:
                     return_count=True,
                 )
                 
-                # albedo += cur_albedo
-                # cnt += cur_cnt
-                mask = cnt.squeeze(-1) < 0.5
-                albedo[mask] += cur_albedo[mask]
-                cnt[mask] += cur_cnt[mask]
+                albedo += cur_albedo
+                cnt += cur_cnt
+                # mask = cnt.squeeze(-1) < 0.5
+                # albedo[mask] += cur_albedo[mask]
+                # cnt[mask] += cur_cnt[mask]
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
@@ -322,14 +322,13 @@ class GUI:
                     callback=callback_setattr,
                     user_data="prompt",
                 )
-
-                if self.opt.guidance_model in ["SD", "IF"]:
-                    dpg.add_input_text(
-                        label="negative",
-                        default_value=self.negative_prompt,
-                        callback=callback_setattr,
-                        user_data="negative_prompt",
-                    )
+            
+                dpg.add_input_text(
+                    label="negative",
+                    default_value=self.negative_prompt,
+                    callback=callback_setattr,
+                    user_data="negative_prompt",
+                )
 
                 # generate texture
                 with dpg.group(horizontal=True):
