@@ -271,7 +271,7 @@ class Mesh:
     def auto_size(self):
         vmin, vmax = self.aabb()
         self.ori_center = (vmax + vmin) / 2
-        self.ori_scale = 1.2 / torch.max(vmax - vmin).item() # to ~ [-0.6, 0.6]
+        self.ori_scale = 1.8 / torch.max(vmax - vmin).item()
         self.v = (self.v - self.ori_center) * self.ori_scale
 
     def auto_normal(self):

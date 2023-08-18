@@ -70,19 +70,24 @@ class GUI:
     
     def prepare_guidance(self):
         
+        print(f'[INFO] loading guidance model...')
+
         from guidance.sd_utils import StableDiffusion
-        self.guidance = StableDiffusion(self.device, t_range=[0.02, 0.5])
+        self.guidance = StableDiffusion(self.device)
 
         nega = self.guidance.get_text_embeds([self.negative_prompt])
         posi = self.guidance.get_text_embeds([self.prompt])
         self.guidance_embeds = torch.cat([nega] * self.opt.batch_size + [posi] * self.opt.batch_size, dim=0)
-            
+        
+        print(f'[INFO] loaded guidance model!')
+
+
     def generate(self, texture_size=512, render_resolution=512):
 
-        print(f'[INFO] start generation')
+        print(f'[INFO] start generation...')
 
-        # if self.guidance is None:
-        #     self.prepare_guidance()
+        if self.guidance is None:
+            self.prepare_guidance()
         
         h = w = int(texture_size)
 
@@ -107,28 +112,33 @@ class GUI:
                 out = self.renderer.render(mvp, render_resolution, render_resolution, ssaa=ssaa)
 
                 # draw mask
-                normal = out['normal'] * 2 - 1 # [H, W, 3]
+                normal = out['normal'] # [H, W, 3]
                 xyzs = out['xyzs'] # [H, W, 3]
                 alpha = out['alpha'].squeeze() # [H, W]
 
                 viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
-                viewcos = torch.sum(normal * viewdir, dim=-1) # [H, W], in [-1, 1]
+                viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
 
                 mask = (alpha > 0) & (viewcos > 0.5)  # [H, W]
                 mask = mask.view(-1)
 
                 # generate tex on current view [TODO: RUN SD]
-                cur_img = 1 - out['image'] # [H, W, 3]
-                print(f'[process] {ver} - {hor} {cur_img.shape}')
+                # rgbs = 1 - out['image'] # [H, W, 3]
+                control_image = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                rgbs = self.guidance(self.guidance_embeds, num_inference_steps=50, guidance_scale=7.5, control_image=control_image).float()
+                import kiui
+                kiui.vis.plot_image(control_image, rgbs)
+                rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
+                print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
                 # grid put
                 uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
-                cur_img = cur_img.view(-1, 3)[mask]
+                rgbs = rgbs.view(-1, 3)[mask]
 
                 cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(
                     h, w,
                     uvs[..., [1, 0]] * 2 - 1,
-                    cur_img,
+                    rgbs,
                     min_resolution=128,
                     return_count=True,
                 )
@@ -171,7 +181,7 @@ class GUI:
         # ]
 
         self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
-        print(f'[INFO] finished generation')
+        print(f'[INFO] finished generation!')
 
         self.need_update = True
 
@@ -463,6 +473,7 @@ class GUI:
     
     # no gui mode
     def run(self):
+        self.generate()
         self.save_model()
         
 
@@ -473,15 +484,13 @@ if __name__ == "__main__":
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--input", type=str, required=True)
     parser.add_argument("--wogui", action='store_true')
-    parser.add_argument("--lock_geo", action='store_true')
     parser.add_argument("--H", type=int, default=800)
     parser.add_argument("--W", type=int, default=800)
-    parser.add_argument("--iters", type=int, default=100)
     # parser.add_argument("--ssaa", type=float, default=1)
-    parser.add_argument("--radius", type=float, default=5)
-    parser.add_argument("--fovy", type=float, default=20)
+    parser.add_argument("--radius", type=float, default=2)
+    parser.add_argument("--fovy", type=float, default=60)
     parser.add_argument("--outdir", type=str, default="logs")
-    parser.add_argument("--save_path", type=str, default="out2")
+    parser.add_argument("--save_path", type=str, default="out")
     parser.add_argument("--guidance_model", type=str, default="SD", choices=["none", "zero123", "IF", "SD", "clip"])
     parser.add_argument("--batch_size", type=int, default=1)
 
