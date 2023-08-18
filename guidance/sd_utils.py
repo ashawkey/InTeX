@@ -1,16 +1,11 @@
 from transformers import CLIPTextModel, CLIPTokenizer, logging
 from diffusers import (
-    AutoencoderKL,
-    UNet2DConditionModel,
-    PNDMScheduler,
     DDIMScheduler,
     StableDiffusionPipeline,
+    StableDiffusionControlNetPipeline,
     ControlNetModel,
     UniPCMultistepScheduler,
 )
-from diffusers.utils.import_utils import is_xformers_available
-from os.path import isfile
-from pathlib import Path
 
 # suppress partial model loading warning
 logging.set_verbosity_error()
@@ -33,31 +28,13 @@ class StableDiffusion(nn.Module):
         device,
         fp16=True,
         vram_O=False,
-        sd_version="1.5",
         control_mode="normal",
-        hf_key=None,
-        t_range=[0.02, 0.98],
+        model_key="runwayml/stable-diffusion-v1-5",
     ):
         super().__init__()
 
         self.device = device
-        self.sd_version = sd_version
         self.control_mode = control_mode
-
-        if hf_key is not None:
-            print(f"[INFO] using hugging face custom model key: {hf_key}")
-            model_key = hf_key
-        elif self.sd_version == "2.1":
-            model_key = "stabilityai/stable-diffusion-2-1-base"
-        elif self.sd_version == "2.0":
-            model_key = "stabilityai/stable-diffusion-2-base"
-        elif self.sd_version == "1.5":
-            model_key = "runwayml/stable-diffusion-v1-5"
-        else:
-            raise ValueError(
-                f"Stable-diffusion version {self.sd_version} not supported."
-            )
-
         self.precision_t = torch.float16 if fp16 else torch.float32
 
         # Create model
@@ -81,10 +58,20 @@ class StableDiffusion(nn.Module):
 
         # controlnet
         if self.control_mode is not None:
-            self.controlnet = ControlNetModel.from_pretrained(
-                f"fusing/stable-diffusion-v1-5-controlnet-{self.control_mode}",
-                torch_dtype=self.precision_t,
-            ).to(self.device)
+            # NOTE: controlnet 1.1 is much better...
+            if self.control_mode == "normal":
+                self.controlnet = ControlNetModel.from_pretrained(
+                    "lllyasviel/control_v11p_sd15_normalbae",
+                    torch_dtype=self.precision_t,
+                ).to(self.device)
+            elif self.control_mode == "ip2p":
+                self.controlnet = ControlNetModel.from_pretrained(
+                    "lllyasviel/control_v11p_sd15_ip2p",
+                    torch_dtype=self.precision_t,
+                ).to(self.device)
+            else:
+                raise NotImplementedError
+            
             self.controlnet_conditioning_scale = 1.0
 
         # self.scheduler = DDIMScheduler.from_pretrained(
@@ -95,12 +82,7 @@ class StableDiffusion(nn.Module):
 
         del pipe
 
-        # self.num_train_timesteps = self.scheduler.config.num_train_timesteps
-        # self.min_step = int(self.num_train_timesteps * t_range[0])
-        # self.max_step = int(self.num_train_timesteps * t_range[1])
-        # self.alphas = self.scheduler.alphas_cumprod.to(self.device)  # for convenience
-
-
+       
     @torch.no_grad()
     def get_text_embeds(self, prompt):
         # prompt: [str]
@@ -114,78 +96,6 @@ class StableDiffusion(nn.Module):
         embeddings = self.text_encoder(inputs.input_ids.to(self.device))[0]
 
         return embeddings
-
-    def train_step(
-        self,
-        text_embeddings,
-        pred_rgb,
-        guidance_scale=100,
-        as_latent=False,
-        grad_scale=1,
-    ):
-        text_embeddings = text_embeddings.to(self.precision_t)
-        pred_rgb = pred_rgb.to(self.precision_t)
-
-        if as_latent:
-            latents = (
-                F.interpolate(pred_rgb, (64, 64), mode="bilinear", align_corners=False)
-                * 2
-                - 1
-            )
-        else:
-            # interp to 512x512 to be fed into vae.
-            pred_rgb_512 = F.interpolate(
-                pred_rgb, (512, 512), mode="bilinear", align_corners=False
-            )
-            # encode image into latents with vae, requires grad!
-            latents = self.encode_imgs(pred_rgb_512)
-
-        # timestep ~ U(0.02, 0.98) to avoid very high/low noise level
-        t = torch.randint(
-            self.min_step,
-            self.max_step + 1,
-            (latents.shape[0],),
-            dtype=torch.long,
-            device=self.device,
-        )
-
-        # predict the noise residual with unet, NO grad!
-        with torch.no_grad():
-            # add noise
-            noise = torch.randn_like(latents)
-            latents_noisy = self.scheduler.add_noise(latents, noise, t)
-            # pred noise
-            latent_model_input = torch.cat([latents_noisy] * 2)
-            tt = torch.cat([t] * 2)
-
-            noise_pred = self.unet(
-                latent_model_input, tt, encoder_hidden_states=text_embeddings
-            ).sample
-
-            # perform guidance (high scale from paper!)
-            noise_pred_uncond, noise_pred_pos = noise_pred.chunk(2)
-            noise_pred = noise_pred_uncond + guidance_scale * (
-                noise_pred_pos - noise_pred_uncond
-            )
-
-        # w(t), sigma_t^2
-        w = 1 - self.alphas[t]
-        grad = grad_scale * w[:, None, None, None] * (noise_pred - noise)
-        grad = torch.nan_to_num(grad)
-
-        # seems important to avoid NaN...
-        # grad = grad.clamp(-0.01, 0.01)
-
-        # import kiui
-
-        # target = (latents - grad).detach()
-        # loss = 0.5 * F.mse_loss(latents.float(), target, reduction='sum') / latents.shape[0]
-
-        # kiui.lo(target, loss)
-        loss = (latents * grad).sum()
-        # kiui.lo(latents, grad, loss)
-
-        return loss
 
     def decode_latents(self, latents):
         latents = 1 / self.vae.config.scaling_factor * latents
@@ -215,7 +125,7 @@ class StableDiffusion(nn.Module):
         text_embeddings = text_embeddings.to(self.precision_t)
 
         if latents is None:
-            latents = torch.randn((text_embeddings.shape[0] // 2, self.unet.in_channels, height // 8, width // 8,), dtype=self.precision_t, device=self.device)
+            latents = torch.randn((text_embeddings.shape[0] // 2, 4, height // 8, width // 8,), dtype=self.precision_t, device=self.device)
 
         self.scheduler.set_timesteps(num_inference_steps)
 
@@ -233,7 +143,8 @@ class StableDiffusion(nn.Module):
                 # predict the noise residual
                 noise_pred = self.unet(
                     latent_model_input, t, encoder_hidden_states=text_embeddings, 
-                    down_block_additional_residuals=down_block_res_samples, mid_block_additional_residual=mid_block_res_sample
+                    down_block_additional_residuals=down_block_res_samples, 
+                    mid_block_additional_residual=mid_block_res_sample
                 ).sample
             else:
                 noise_pred = self.unet(

@@ -41,8 +41,8 @@ class GUI:
         self.renderer = Renderer(opt)
 
         # input text
-        self.prompt = self.opt.input
-        self.negative_prompt = ""
+        self.prompt = self.opt.posi_prompt + ', ' + self.opt.prompt
+        self.negative_prompt = self.opt.nega_prompt
 
         if not self.wogui:
             dpg.create_context()
@@ -73,7 +73,7 @@ class GUI:
         print(f'[INFO] loading guidance model...')
 
         from guidance.sd_utils import StableDiffusion
-        self.guidance = StableDiffusion(self.device)
+        self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode)
 
         nega = self.guidance.get_text_embeds([self.negative_prompt])
         posi = self.guidance.get_text_embeds([self.prompt])
@@ -81,7 +81,7 @@ class GUI:
         
         print(f'[INFO] loaded guidance model!')
 
-
+    @torch.no_grad()
     def generate(self, texture_size=512, render_resolution=512):
 
         print(f'[INFO] start generation...')
@@ -95,9 +95,11 @@ class GUI:
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
         vers = [0, -45, 45]
-        hors = [0, 60, -60, 120, -120, 180]
+        hors = [60, -60, 120, -120, 180]
         # vers = [0,]
         # hors = [0,]
+
+        start_t = time.time()
 
         for ver in vers:
             for hor in hors:
@@ -122,12 +124,18 @@ class GUI:
                 mask = (alpha > 0) & (viewcos > 0.5)  # [H, W]
                 mask = mask.view(-1)
 
-                # generate tex on current view [TODO: RUN SD]
+                # generate tex on current view
                 # rgbs = 1 - out['image'] # [H, W, 3]
-                control_image = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                rgbs = self.guidance(self.guidance_embeds, num_inference_steps=50, guidance_scale=7.5, control_image=control_image).float()
-                import kiui
-                kiui.vis.plot_image(control_image, rgbs)
+                if self.opt.control_mode == 'normal':
+                    control_image = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                elif self.opt.control_mode == 'ip2p':
+                    control_image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()
+                else:
+                    raise NotImplementedError
+                
+                rgbs = self.guidance(self.guidance_embeds, control_image=control_image).float()
+                # import kiui
+                # kiui.vis.plot_image(rgbs)
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -181,7 +189,10 @@ class GUI:
         # ]
 
         self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
-        print(f'[INFO] finished generation!')
+
+        torch.cuda.synchronize()
+        end_t = time.time()
+        print(f'[INFO] finished generation in {end_t - start_t:.3f}s!')
 
         self.need_update = True
 
@@ -482,16 +493,18 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
-    parser.add_argument("--input", type=str, required=True)
+    parser.add_argument("--prompt", type=str, required=True)
+    parser.add_argument("--posi_prompt", type=str, default="high quality, soft lighting, 3d")
+    parser.add_argument("--nega_prompt", type=str, default="low light, dark, worst quality, low quality, blurry, ugly")
+    parser.add_argument("--control_mode", type=str, default="normal")
+    parser.add_argument("--outdir", type=str, default="logs")
+    parser.add_argument("--save_path", type=str, default="out")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--H", type=int, default=800)
     parser.add_argument("--W", type=int, default=800)
     # parser.add_argument("--ssaa", type=float, default=1)
     parser.add_argument("--radius", type=float, default=2)
     parser.add_argument("--fovy", type=float, default=60)
-    parser.add_argument("--outdir", type=str, default="logs")
-    parser.add_argument("--save_path", type=str, default="out")
-    parser.add_argument("--guidance_model", type=str, default="SD", choices=["none", "zero123", "IF", "SD", "clip"])
     parser.add_argument("--batch_size", type=int, default=1)
 
     opt = parser.parse_args()
