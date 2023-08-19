@@ -2,7 +2,6 @@ tqdm
 rich
 ninja
 numpy
-pandas
 scipy
 scikit-learn
 matplotlib
@@ -11,16 +10,10 @@ imageio
 imageio-ffmpeg
 
 torch
-torch-ema
 einops
-tensorboard
-tensorboardX
 
 # for gui
 dearpygui
-
-# for grid_tcnn
-# git+https://github.com/NVlabs/tiny-cuda-nn/#subdirectory=bindings/torch
 
 # for stable-diffusion
 huggingface_hub
@@ -33,20 +26,3 @@ xatlas
 trimesh
 PyMCubes
 pymeshlab
-
-# for zero123
-carvekit-colab
-omegaconf
-pytorch-lightning
-taming-transformers-rom1504
-kornia
-git+https://github.com/openai/CLIP.git
-
-# for omnidata
-gdown
-
-# for dpt
-timm
-
-# for deepfloyd if
-sentencepiece

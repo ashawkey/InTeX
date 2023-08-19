@@ -128,7 +128,7 @@ class GUI:
                 normal = out['normal'] # [H, W, 3]
                 xyzs = out['xyzs'] # [H, W, 3]
                 alpha = out['alpha'].squeeze() # [H, W]
-                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).expand_as(control_image_inpaint).contiguous() < 0.1 # [1, 1, H, W] --> [1, 3, H, W]
+                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).repeat(1, 3, 1, 1).contiguous() < 0.1 # [1, 1, H, W] --> [1, 3, H, W]
 
                 # nothing to inpaint for this view, continue
                 if not inpaint_mask.any():
