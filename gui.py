@@ -73,11 +73,19 @@ class GUI:
         print(f'[INFO] loading guidance model...')
 
         from guidance.sd_utils import StableDiffusion
-        self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode)
+        self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key)
 
         nega = self.guidance.get_text_embeds([self.negative_prompt])
-        posi = self.guidance.get_text_embeds([self.prompt])
-        self.guidance_embeds = torch.cat([nega, posi], dim=0)
+
+        if not self.opt.text_dir:
+            posi = self.guidance.get_text_embeds([self.prompt])
+            self.guidance_embeds = torch.cat([nega, posi], dim=0)
+        else:
+            self.guidance_embeds = {}
+            for d in ['front', 'side', 'back']:
+                posi = self.guidance.get_text_embeds([self.prompt + f', {d} view'])
+                self.guidance_embeds[d] = torch.cat([nega, posi], dim=0)
+
         
         print(f'[INFO] loaded guidance model!')
 
@@ -120,6 +128,11 @@ class GUI:
                 normal = out['normal'] # [H, W, 3]
                 xyzs = out['xyzs'] # [H, W, 3]
                 alpha = out['alpha'].squeeze() # [H, W]
+                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).expand_as(control_image_inpaint).contiguous() < 0.1 # [1, 1, H, W] --> [1, 3, H, W]
+
+                # nothing to inpaint for this view, continue
+                if not inpaint_mask.any():
+                    continue
 
                 viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
                 viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
@@ -127,23 +140,25 @@ class GUI:
                 mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
                 mask = mask.view(-1)
 
-                # generate tex on current view
-                # rgbs = 1 - out['image'] # [H, W, 3]
-                # hard code control mode now...
-                
+                # construct normal control
                 control_image_normal = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
 
                 # construct inpaint control
                 control_image_inpaint = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).expand_as(control_image_inpaint).contiguous() # [1, 1, H, W] --> [1, 3, H, W]
-                # control_image_inpaint = image * (1 - inpaint_mask) + (-1) * inpaint_mask
-                control_image_inpaint[inpaint_mask < 0.1] = -1
+                control_image_inpaint[inpaint_mask] = -1 # -1 is to inpaint region
 
                 control_images = [control_image_normal, control_image_inpaint]
                 
-                rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
-                import kiui
-                kiui.vis.plot_image(control_image_normal, inpaint_mask, rgbs)
+                if not self.opt.text_dir:
+                    rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
+                else:
+                    if abs(hor) < 30: d = 'front'
+                    elif abs(hor) < 150: d = 'side'
+                    else: d = 'back'
+                    rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
+
+                # import kiui
+                # kiui.vis.plot_image(control_image_normal, inpaint_mask, rgbs)
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -151,13 +166,7 @@ class GUI:
                 uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
                 rgbs = rgbs.view(-1, 3)[mask]
 
-                cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(
-                    h, w,
-                    uvs[..., [1, 0]] * 2 - 1,
-                    rgbs,
-                    min_resolution=128,
-                    return_count=True,
-                )
+                cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
                 
                 albedo += cur_albedo
                 cnt += cur_cnt
@@ -167,17 +176,16 @@ class GUI:
 
                 # update mesh texture for rendering
                 mask = cnt.squeeze(-1) > 0        
-                tmp_albedo = albedo.clone()
-                tmp_albedo[mask] /= cnt[mask].repeat(1, 3)
-                self.renderer.mesh.albedo = tmp_albedo
+                cur_albedo = albedo.clone()
+                cur_albedo[mask] /= cnt[mask].repeat(1, 3)
+                self.renderer.mesh.albedo = cur_albedo
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
 
-        mask = mask.view(h, w)
-
-        albedo = albedo.detach().cpu().numpy()
-        mask = mask.detach().cpu().numpy()
+        # mask = mask.view(h, w)
+        # albedo = albedo.detach().cpu().numpy()
+        # mask = mask.detach().cpu().numpy()
 
         # dilate texture
         # from sklearn.neighbors import NearestNeighbors
@@ -202,7 +210,8 @@ class GUI:
         #     tuple(search_coords[indices[:, 0]].T)
         # ]
 
-        self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
+        # self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
+        self.renderer.mesh.albedo = albedo
 
         torch.cuda.synchronize()
         end_t = time.time()
@@ -513,7 +522,9 @@ if __name__ == "__main__":
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out")
+    parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
     parser.add_argument("--wogui", action='store_true')
+    parser.add_argument("--text_dir", action='store_true')
     parser.add_argument("--H", type=int, default=800)
     parser.add_argument("--W", type=int, default=800)
     parser.add_argument("--radius", type=float, default=2)
