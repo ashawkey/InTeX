@@ -94,8 +94,12 @@ class GUI:
         albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
+        # discard current texture, and also patch texture-cnt to mesh for rendering inpaint mask
+        self.renderer.mesh.albedo = albedo
+        self.renderer.mesh.cnt = cnt 
+
         vers = [0, -45, 45]
-        hors = [60, -60, 120, -120, 180]
+        hors = [0, 60, -60, 120, -120, 180]
         # vers = [0,]
         # hors = [0,]
 
@@ -110,8 +114,7 @@ class GUI:
                 mvp = self.cam.perspective @ np.linalg.inv(pose)
                 mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
 
-                ssaa = 1
-                out = self.renderer.render(mvp, render_resolution, render_resolution, ssaa=ssaa)
+                out = self.renderer.render(mvp, render_resolution, render_resolution)
 
                 # draw mask
                 normal = out['normal'] # [H, W, 3]
@@ -126,16 +129,21 @@ class GUI:
 
                 # generate tex on current view
                 # rgbs = 1 - out['image'] # [H, W, 3]
-                if self.opt.control_mode == 'normal':
-                    control_image = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                elif self.opt.control_mode == 'ip2p':
-                    control_image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()
-                else:
-                    raise NotImplementedError
+                # hard code control mode now...
                 
-                rgbs = self.guidance(self.guidance_embeds, control_image=control_image).float()
+                control_image_normal = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+
+                # construct inpaint control
+                control_image_inpaint = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).expand_as(control_image_inpaint).contiguous() # [1, 1, H, W] --> [1, 3, H, W]
+                # control_image_inpaint = image * (1 - inpaint_mask) + (-1) * inpaint_mask
+                control_image_inpaint[inpaint_mask < 0.1] = -1
+
+                control_images = [control_image_normal, control_image_inpaint]
+                
+                rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
                 import kiui
-                kiui.vis.plot_image(control_image, rgbs)
+                kiui.vis.plot_image(control_image_normal, inpaint_mask, rgbs)
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -156,6 +164,12 @@ class GUI:
                 # mask = cnt.squeeze(-1) < 0.5
                 # albedo[mask] += cur_albedo[mask]
                 # cnt[mask] += cur_cnt[mask]
+
+                # update mesh texture for rendering
+                mask = cnt.squeeze(-1) > 0        
+                tmp_albedo = albedo.clone()
+                tmp_albedo[mask] /= cnt[mask].repeat(1, 3)
+                self.renderer.mesh.albedo = tmp_albedo
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
@@ -493,15 +507,15 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--posi_prompt", type=str, default="high quality, soft lighting, 3d")
-    parser.add_argument("--nega_prompt", type=str, default="low light, dark, worst quality, low quality, blurry, ugly")
-    parser.add_argument("--control_mode", type=str, default="normal")
+    parser.add_argument("--posi_prompt", type=str, default="high quality")
+    parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
+    parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
+    # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--H", type=int, default=800)
     parser.add_argument("--W", type=int, default=800)
-    # parser.add_argument("--ssaa", type=float, default=1)
     parser.add_argument("--radius", type=float, default=2)
     parser.add_argument("--fovy", type=float, default=60)
 

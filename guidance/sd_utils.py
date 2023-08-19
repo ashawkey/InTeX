@@ -28,7 +28,7 @@ class StableDiffusion(nn.Module):
         device,
         fp16=True,
         vram_O=False,
-        control_mode="normal",
+        control_mode=["normal",],
         model_key="runwayml/stable-diffusion-v1-5",
     ):
         super().__init__()
@@ -58,22 +58,14 @@ class StableDiffusion(nn.Module):
 
         # controlnet
         if self.control_mode is not None:
-            # NOTE: controlnet 1.1 is much better...
-            if self.control_mode == "normal":
-                self.controlnet = ControlNetModel.from_pretrained(
-                    "lllyasviel/control_v11p_sd15_normalbae",
-                    torch_dtype=self.precision_t,
-                ).to(self.device)
-            elif self.control_mode == "ip2p":
-                self.controlnet = ControlNetModel.from_pretrained(
-                    "lllyasviel/control_v11e_sd15_ip2p",
-                    torch_dtype=self.precision_t,
-                ).to(self.device)
-            else:
-                raise NotImplementedError
-            
+            self.controlnet = []
             self.controlnet_conditioning_scale = 1.0
-
+            
+            if "normal" in self.control_mode:
+                self.controlnet.append(ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_normalbae",torch_dtype=self.precision_t).to(self.device))
+            if "inpaint" in self.control_mode:
+                self.controlnet.append(ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.precision_t).to(self.device))
+            
         # self.scheduler = DDIMScheduler.from_pretrained(
         #     model_key, subfolder="scheduler", torch_dtype=self.precision_t
         # )
@@ -118,7 +110,7 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        control_image=None,
+        control_images=None,
         latents=None,
     ):
 
@@ -129,16 +121,26 @@ class StableDiffusion(nn.Module):
 
         self.scheduler.set_timesteps(num_inference_steps)
 
-        for i, t in enumerate(self.scheduler.timesteps):
+        for t in self.scheduler.timesteps:
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)
 
             # controlnet
-            if self.control_mode is not None and control_image is not None:
-                control_image_input = torch.cat([control_image] * 2).to(self.precision_t)
-                down_block_res_samples, mid_block_res_sample = self.controlnet(latent_model_input, t, encoder_hidden_states=text_embeddings, controlnet_cond=control_image_input, return_dict=False)
-                down_block_res_samples = [down_block_res_sample * self.controlnet_conditioning_scale for down_block_res_sample in down_block_res_samples]
-                mid_block_res_sample *= self.controlnet_conditioning_scale
+            if self.control_mode is not None and control_images is not None:
+                # support multi-control mode
+                for i, (control_image, controlnet) in enumerate(zip(control_images, self.controlnet)):
+                    control_image_input = torch.cat([control_image] * 2).to(self.precision_t)
+                    down_samples, mid_sample = controlnet(latent_model_input, t, encoder_hidden_states=text_embeddings, controlnet_cond=control_image_input, conditioning_scale=self.controlnet_conditioning_scale, return_dict=False)
+                    # merge
+                    if i == 0:
+                        down_block_res_samples, mid_block_res_sample = down_samples, mid_sample
+                    else:
+                        down_block_res_samples = [samples_prev + samples_curr for samples_prev, samples_curr in zip(down_block_res_samples, down_samples)]
+                        mid_block_res_sample += mid_sample
+
+                # adjust control scale
+                # down_block_res_samples = [down_block_res_sample * self.controlnet_conditioning_scale for down_block_res_sample in down_block_res_samples]
+                # mid_block_res_sample *= self.controlnet_conditioning_scale
 
                 # predict the noise residual
                 noise_pred = self.unet(

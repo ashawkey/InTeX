@@ -58,16 +58,9 @@ class Renderer(nn.Module):
     def export_mesh(self, save_path):
         self.mesh.write(save_path)
 
-    def render(self, mvp, h0, w0, ssaa=1, bg_color=1):
+    def render(self, mvp, h, w, bg_color=1):
         # mvp: [4, 4]
 
-        # do super-sampling
-        if ssaa != 1:
-            h = make_divisible(h0 * ssaa, 8)
-            w = make_divisible(w0 * ssaa, 8)
-        else:
-            h, w = h0, w0
-        
         results = {}
 
         # get v
@@ -80,6 +73,7 @@ class Renderer(nn.Module):
 
         alpha = (rast[..., 3:] > 0).float()
 
+        # rgb texture
         texc, texc_db = dr.interpolate(self.mesh.vt.unsqueeze(0).contiguous(), rast, self.mesh.ft, rast_db=rast_db, diff_attrs='all')
         albedo = dr.texture(self.mesh.albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear') # [1, H, W, 3]
         albedo = torch.where(rast[..., 3:] > 0, albedo, torch.tensor(0).to(albedo.device)) # remove background
@@ -96,18 +90,16 @@ class Renderer(nn.Module):
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
         alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
-        depth = rast[0, :, :, [2]] # [H, W]
+        depth = rast[0, :, :, [2]] # [H, W] NOTE: not cam space depth, but clip space...
         
         albedo = albedo + (1 - alpha) * bg_color
 
-        # ssaa
-        if ssaa != 1:
-            albedo = scale_img_hwc(albedo, (h0, w0))
-            alpha = scale_img_hwc(alpha, (h0, w0))
-            depth = scale_img_hwc(depth, (h0, w0))
-            normal = scale_img_hwc(normal, (h0, w0))
-            xyzs = scale_img_hwc(xyzs, (h0, w0))
-            texc = scale_img_hwc(texc, (h0, w0))
+        # extra texture
+        if hasattr(self.mesh, 'cnt'):
+            cnt = dr.texture(self.mesh.cnt.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
+            cnt = torch.where(rast[..., 3:] > 0, cnt, torch.tensor(1).to(cnt.device)) # remove background (1 means no-inpaint)
+            cnt = dr.antialias(cnt, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
+            results['cnt'] = cnt
 
         results['image'] = albedo
         results['alpha'] = alpha
