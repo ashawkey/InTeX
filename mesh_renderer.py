@@ -46,17 +46,20 @@ class Renderer(nn.Module):
 
         self.opt = opt
 
-        self.mesh = Mesh.load(self.opt.mesh)
+        self.mesh = None
 
         if self.opt.wogui or os.name == 'nt':
             self.glctx = dr.RasterizeGLContext()
         else:
             self.glctx = dr.RasterizeCudaContext()
 
+    @torch.no_grad()
+    def load_mesh(self, path):
+        self.mesh = Mesh.load(path)
 
     @torch.no_grad()
-    def export_mesh(self, save_path):
-        self.mesh.write(save_path)
+    def export_mesh(self, path):
+        self.mesh.write(path)
 
     def render(self, mvp, h, w, bg_color=1):
         # mvp: [4, 4]

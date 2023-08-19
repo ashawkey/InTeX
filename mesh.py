@@ -345,6 +345,8 @@ class Mesh:
         _mesh = trimesh.Trimesh(vertices=v_np, faces=f_np)
         _mesh.export(path)
 
+    # TODO: write to glb file (should support texture)
+
     # write to obj file
     def write(self, path):
         mtl_path = path.replace(".obj", ".mtl")

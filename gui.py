@@ -40,6 +40,10 @@ class GUI:
         # renderer
         self.renderer = Renderer(opt)
 
+        # input mesh
+        if self.opt.mesh is not None:
+            self.renderer.load_mesh(self.opt.mesh)
+
         # input text
         self.prompt = self.opt.posi_prompt + ', ' + self.opt.prompt
         self.negative_prompt = self.opt.nega_prompt
@@ -266,6 +270,7 @@ class GUI:
         self.renderer.export_mesh(path)
 
         print(f"[INFO] save model to {path}.")
+        return path
 
     def register_dpg(self):
         ### register texture
@@ -522,7 +527,9 @@ if __name__ == "__main__":
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out")
-    parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
+    # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
+    # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
+    parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--text_dir", action='store_true')
     parser.add_argument("--H", type=int, default=800)
