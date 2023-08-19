@@ -66,7 +66,7 @@ class StableDiffusion(nn.Module):
                 ).to(self.device)
             elif self.control_mode == "ip2p":
                 self.controlnet = ControlNetModel.from_pretrained(
-                    "lllyasviel/control_v11p_sd15_ip2p",
+                    "lllyasviel/control_v11e_sd15_ip2p",
                     torch_dtype=self.precision_t,
                 ).to(self.device)
             else:

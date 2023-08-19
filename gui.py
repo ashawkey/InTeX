@@ -77,7 +77,7 @@ class GUI:
 
         nega = self.guidance.get_text_embeds([self.negative_prompt])
         posi = self.guidance.get_text_embeds([self.prompt])
-        self.guidance_embeds = torch.cat([nega] * self.opt.batch_size + [posi] * self.opt.batch_size, dim=0)
+        self.guidance_embeds = torch.cat([nega, posi], dim=0)
         
         print(f'[INFO] loaded guidance model!')
 
@@ -134,8 +134,8 @@ class GUI:
                     raise NotImplementedError
                 
                 rgbs = self.guidance(self.guidance_embeds, control_image=control_image).float()
-                # import kiui
-                # kiui.vis.plot_image(rgbs)
+                import kiui
+                kiui.vis.plot_image(control_image, rgbs)
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -504,7 +504,6 @@ if __name__ == "__main__":
     # parser.add_argument("--ssaa", type=float, default=1)
     parser.add_argument("--radius", type=float, default=2)
     parser.add_argument("--fovy", type=float, default=60)
-    parser.add_argument("--batch_size", type=int, default=1)
 
     opt = parser.parse_args()
 
