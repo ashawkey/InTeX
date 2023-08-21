@@ -7,6 +7,7 @@ import dearpygui.dearpygui as dpg
 
 import torch
 import torch.nn.functional as F
+from torchvision.transforms.functional import gaussian_blur
 
 import trimesh
 import rembg
@@ -102,6 +103,7 @@ class GUI:
             self.prepare_guidance()
         
         h = w = int(texture_size)
+        H = W = int(render_resolution)
 
         albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
@@ -117,6 +119,8 @@ class GUI:
 
         start_t = time.time()
 
+        first_iter = True
+
         for ver in vers:
             for hor in hors:
 
@@ -126,36 +130,42 @@ class GUI:
                 mvp = self.cam.perspective @ np.linalg.inv(pose)
                 mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
 
-                out = self.renderer.render(mvp, render_resolution, render_resolution)
+                out = self.renderer.render(mvp, H, W)
 
-                # draw mask
                 normal = out['normal'] # [H, W, 3]
                 xyzs = out['xyzs'] # [H, W, 3]
                 alpha = out['alpha'].squeeze() # [H, W]
-                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).repeat(1, 3, 1, 1).contiguous() < 0.1 # [1, 1, H, W] --> [1, 3, H, W]
+                image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
 
-                # nothing to inpaint for this view, continue
-                if not inpaint_mask.any():
-                    continue
+                # inpaint mask
+                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
+                inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
+                inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
+                # project-texture mask
                 viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
                 viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
-
                 mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
                 mask = mask.view(-1)
 
                 control_images = {}
                 # construct normal control
                 if 'normal' in self.opt.control_mode:
-                # if hor == 0 and ver == 0:
                     control_images['normal'] = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
                 
                 # construct inpaint control
-                # else:
-                if 'inpaint' in self.opt.control_mode:
-                    inpaint_image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                    inpaint_image[inpaint_mask] = -1 # -1 is to inpaint region
+                if 'inpaint' in self.opt.control_mode and not first_iter:
+                    inpaint_image = image.clone()
+                    inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+
+                    # exp: also let it inpaint background... so inpaint is not affected by the white bg color
+                    # inpaint_image[(alpha <= 0).expand_as(inpaint_image)] = -1
+
                     control_images['inpaint'] = inpaint_image
+                    # mask hack to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+                    latents_inpaint_mask = F.interpolate(inpaint_mask, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                    control_images['latents_inpaint_mask'] = latents_inpaint_mask
+                    control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
                 
                 if not self.opt.text_dir:
                     rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
@@ -164,9 +174,13 @@ class GUI:
                     elif abs(hor) < 150: d = 'side'
                     else: d = 'back'
                     rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
+                
+                # apply mask to make sure non-inpaint region is not changed
+                # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
-                import kiui
-                kiui.vis.plot_image(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous(), rgbs)
+                # import kiui
+                # if not first_iter:
+                #     kiui.vis.plot_image(inpaint_image.clamp(0, 1), rgbs)
 
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
@@ -188,6 +202,8 @@ class GUI:
                 cur_albedo = albedo.clone()
                 cur_albedo[mask] /= cnt[mask].repeat(1, 3)
                 self.renderer.mesh.albedo = cur_albedo
+
+                first_iter = False
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
@@ -525,7 +541,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--posi_prompt", type=str, default="high quality")
+    parser.add_argument("--posi_prompt", type=str, default="high quality, masterpiece")
     parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
     parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
     # parser.add_argument("--control_mode", action='append', default=['normal'])
@@ -533,7 +549,8 @@ if __name__ == "__main__":
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out.obj")
     # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
-    parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
+    # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
+    parser.add_argument("--model_key", type=str, default="philz1337/revanimated")
     # parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--text_dir", action='store_true')

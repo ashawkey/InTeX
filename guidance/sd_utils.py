@@ -48,12 +48,13 @@ class StableDiffusion(nn.Module):
         super().__init__()
 
         self.device = device
+        self.dtype = torch.float16 if fp16 else torch.float32
+
         self.control_mode = control_mode
-        self.precision_t = torch.float16 if fp16 else torch.float32
 
         # Create model
         pipe = StableDiffusionPipeline.from_pretrained(
-            model_key, torch_dtype=self.precision_t
+            model_key, torch_dtype=self.dtype
         )
 
         if vram_O:
@@ -73,17 +74,16 @@ class StableDiffusion(nn.Module):
         # controlnet
         if self.control_mode is not None:
             self.controlnet = {}
-            self.controlnet_conditioning_scale = 1.0
+            self.controlnet_conditioning_scale = {}
             
             if "normal" in self.control_mode:
-                self.controlnet['normal'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_normalbae",torch_dtype=self.precision_t).to(self.device)
+                self.controlnet['normal'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_normalbae",torch_dtype=self.dtype).to(self.device)
+                self.controlnet_conditioning_scale['normal'] = 1.0
             if "inpaint" in self.control_mode:
-                self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.precision_t).to(self.device)
+                self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.dtype).to(self.device)
+                self.controlnet_conditioning_scale['inpaint'] = 1.0
             
-        # self.scheduler = DDIMScheduler.from_pretrained(
-        #     model_key, subfolder="scheduler", torch_dtype=self.precision_t
-        # )
-
+        # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
         self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
 
         del pipe
@@ -124,19 +124,29 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        guidance_rescale=0.7,
+        guidance_rescale=0,
         control_images=None,
         latents=None,
     ):
 
-        text_embeddings = text_embeddings.to(self.precision_t)
+        text_embeddings = text_embeddings.to(self.dtype)
+        for k in control_images:
+            control_images[k] = control_images[k].to(self.dtype)
 
         if latents is None:
-            latents = torch.randn((text_embeddings.shape[0] // 2, 4, height // 8, width // 8,), dtype=self.precision_t, device=self.device)
+            latents = torch.randn((text_embeddings.shape[0] // 2, 4, height // 8, width // 8,), dtype=self.dtype, device=self.device)
 
         self.scheduler.set_timesteps(num_inference_steps)
 
         for t in self.scheduler.timesteps:
+            # inpaint mask trick
+            if 'inpaint' in control_images:
+                mask = control_images['latents_inpaint_mask']
+                latents_original = control_images['latents_original']
+                noise = torch.randn_like(latents_original)
+                latents_original = self.scheduler.add_noise(latents_original, noise, t)
+                latents = latents * mask + latents_original * (1 - mask)
+
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)
             latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
@@ -151,8 +161,13 @@ class StableDiffusion(nn.Module):
                     if mode not in control_images: 
                         continue
                     control_image = control_images[mode]
-                    control_image_input = torch.cat([control_image] * 2).to(self.precision_t)
-                    down_samples, mid_sample = controlnet(latent_model_input, t, encoder_hidden_states=text_embeddings, controlnet_cond=control_image_input, conditioning_scale=self.controlnet_conditioning_scale, return_dict=False)
+                    control_image_input = torch.cat([control_image] * 2)
+                    down_samples, mid_sample = controlnet(
+                        latent_model_input, t, encoder_hidden_states=text_embeddings, 
+                        controlnet_cond=control_image_input, 
+                        conditioning_scale=self.controlnet_conditioning_scale[mode],
+                        return_dict=False
+                    )
                     # merge
                     if down_block_res_samples is None:
                         down_block_res_samples, mid_block_res_sample = down_samples, mid_sample
