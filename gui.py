@@ -110,7 +110,7 @@ class GUI:
         self.renderer.mesh.albedo = albedo
         self.renderer.mesh.cnt = cnt 
 
-        vers = [0, -45, 45]
+        vers = [0, -30, 30]
         hors = [0, 60, -60, 120, -120, 180]
         # vers = [0,]
         # hors = [0,]
@@ -144,14 +144,18 @@ class GUI:
                 mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
                 mask = mask.view(-1)
 
+                control_images = {}
                 # construct normal control
-                control_image_normal = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-
+                if 'normal' in self.opt.control_mode:
+                # if hor == 0 and ver == 0:
+                    control_images['normal'] = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                
                 # construct inpaint control
-                control_image_inpaint = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                control_image_inpaint[inpaint_mask] = -1 # -1 is to inpaint region
-
-                control_images = [control_image_normal, control_image_inpaint]
+                # else:
+                if 'inpaint' in self.opt.control_mode:
+                    inpaint_image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                    inpaint_image[inpaint_mask] = -1 # -1 is to inpaint region
+                    control_images['inpaint'] = inpaint_image
                 
                 if not self.opt.text_dir:
                     rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
@@ -161,8 +165,9 @@ class GUI:
                     else: d = 'back'
                     rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
 
-                # import kiui
-                # kiui.vis.plot_image(control_image_normal, inpaint_mask, rgbs)
+                import kiui
+                kiui.vis.plot_image(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous(), rgbs)
+
                 rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
                 print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -172,11 +177,11 @@ class GUI:
 
                 cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
                 
-                albedo += cur_albedo
-                cnt += cur_cnt
-                # mask = cnt.squeeze(-1) < 0.5
-                # albedo[mask] += cur_albedo[mask]
-                # cnt[mask] += cur_cnt[mask]
+                # albedo += cur_albedo
+                # cnt += cur_cnt
+                mask = cnt.squeeze(-1) < 0.1
+                albedo[mask] += cur_albedo[mask]
+                cnt[mask] += cur_cnt[mask]
 
                 # update mesh texture for rendering
                 mask = cnt.squeeze(-1) > 0        
@@ -187,35 +192,31 @@ class GUI:
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
 
-        # mask = mask.view(h, w)
-        # albedo = albedo.detach().cpu().numpy()
-        # mask = mask.detach().cpu().numpy()
+        mask = mask.view(h, w)
+        albedo = albedo.detach().cpu().numpy()
+        mask = mask.detach().cpu().numpy()
 
         # dilate texture
-        # from sklearn.neighbors import NearestNeighbors
-        # from scipy.ndimage import binary_dilation, binary_erosion
+        from sklearn.neighbors import NearestNeighbors
+        from scipy.ndimage import binary_dilation, binary_erosion
 
-        # inpaint_region = binary_dilation(mask, iterations=32)
-        # inpaint_region[mask] = 0
+        inpaint_region = binary_dilation(mask, iterations=32)
+        inpaint_region[mask] = 0
 
-        # search_region = mask.copy()
-        # not_search_region = binary_erosion(search_region, iterations=3)
-        # search_region[not_search_region] = 0
+        search_region = mask.copy()
+        not_search_region = binary_erosion(search_region, iterations=3)
+        search_region[not_search_region] = 0
 
-        # search_coords = np.stack(np.nonzero(search_region), axis=-1)
-        # inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
+        search_coords = np.stack(np.nonzero(search_region), axis=-1)
+        inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
 
-        # knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(
-        #     search_coords
-        # )
-        # _, indices = knn.kneighbors(inpaint_coords)
+        knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
+        _, indices = knn.kneighbors(inpaint_coords)
 
-        # albedo[tuple(inpaint_coords.T)] = albedo[
-        #     tuple(search_coords[indices[:, 0]].T)
-        # ]
+        albedo[tuple(inpaint_coords.T)] = albedo[tuple(search_coords[indices[:, 0]].T)]
 
-        # self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
-        self.renderer.mesh.albedo = albedo
+        self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
+        # self.renderer.mesh.albedo = albedo
 
         torch.cuda.synchronize()
         end_t = time.time()
@@ -527,12 +528,13 @@ if __name__ == "__main__":
     parser.add_argument("--posi_prompt", type=str, default="high quality")
     parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
     parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
+    # parser.add_argument("--control_mode", action='append', default=['normal'])
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out.obj")
     # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
-    # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
-    parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
+    parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
+    # parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--text_dir", action='store_true')
     parser.add_argument("--H", type=int, default=800)

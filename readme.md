@@ -14,9 +14,12 @@ pip install -r requirements.txt
 
 ### Usage
 ```bash
-# gui
+# local gui
 python gui.py --mesh data/dragon.obj --prompt "a pet dragon with rainbow patterns" --save_path dragon_rainbow --text_dir
 
 # cmd
 python gui.py --mesh data/dragon.obj --prompt "a pet dragon with rainbow patterns" --save_path dragon_rainbow --text_dir --wogui
+
+# gradio web gui (only allow obj/glb/gltf)
+python app.py
 ```
