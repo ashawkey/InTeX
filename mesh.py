@@ -320,7 +320,6 @@ class Mesh:
             if cache_path is not None:
                 np.savez(cache_path, vt=vt_np, ft=ft_np, vmapping=vmapping)
         
-
         vt = torch.from_numpy(vt_np.astype(np.float32)).to(self.device)
         ft = torch.from_numpy(ft_np.astype(np.int32)).to(self.device)
         self.vt = vt
@@ -329,12 +328,22 @@ class Mesh:
         if vmap:
             # remap v/f to vt/ft, so each v correspond to a unique vt. (necessary for gltf)
             vmapping = torch.from_numpy(vmapping.astype(np.int64)).long().to(self.device)
-            self.v = self.v[vmapping]
-            self.f = ft
-            # assume fn == f
-            if self.vn is not None:
-                self.vn = self.vn[vmapping]
-                self.fn = self.ft
+            self.align_v_to_vt(vmapping)
+    
+    def align_v_to_vt(self, vmapping=None):
+        # remap v/f and vn/vn to vt/ft.
+        if vmapping is None:
+            ft = self.ft.view(-1).long()
+            f = self.f.view(-1).long()
+            vmapping = torch.zeros(self.vt.shape[0], dtype=torch.long, device=self.device)
+            vmapping[ft] = f # scatter, choose one if not index is not unique
+
+        self.v = self.v[vmapping]
+        self.f = self.ft
+        # assume fn == f
+        if self.vn is not None:
+            self.vn = self.vn[vmapping]
+            self.fn = self.ft
 
     def to(self, device):
         self.device = device
@@ -367,7 +376,11 @@ class Mesh:
     def write_glb(self, path):
 
         assert self.vn is not None and self.vt is not None # should be improved to support export without texture...
-        assert self.v.shape[0] == self.vn.shape[0] and self.v.shape[0] == self.vt.shape[0]
+
+        # assert self.v.shape[0] == self.vn.shape[0] and self.v.shape[0] == self.vt.shape[0]
+        if self.v.shape[0] != self.vt.shape[0]:
+            self.align_v_to_vt()
+
         # assume f == fn == ft
 
         import pygltflib

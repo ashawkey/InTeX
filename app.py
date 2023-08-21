@@ -26,6 +26,7 @@ parser.add_argument("--fovy", type=float, default=60)
 opt = parser.parse_args()
 opt.wogui = True
 opt.text_dir = True
+opt.save_path = 'out.glb' # use glb to correctly show texture in gr.Model3D
 
 core = GUI(opt)
 core.prepare_guidance()
@@ -38,19 +39,21 @@ def process(prompt, mesh_path):
     # return out_path
     tex = core.renderer.mesh.albedo.detach().cpu().numpy()
     tex = (tex * 255).astype(np.uint8)
-    return tex
+    return out_path, tex
 
 block = gr.Blocks().queue()
 with block:
     gr.Markdown("## Tetere: text-to-texture")
 
-    with gr.Column():
-        input_prompt = gr.Textbox(label="prompt")
-        model = gr.Model3D(label="3D model")
-
-        output_image = gr.Image(label="texture")
+    with gr.Row():
+        with gr.Column():
+            input_prompt = gr.Textbox(label="prompt")
+            model = gr.Model3D(label="3D model")
+            button_generate = gr.Button("Generate")
+        
+        with gr.Column():
+            output_image = gr.Image(label="texture")
     
-        button_generate = gr.Button("Generate")
-        button_generate.click(process, inputs=[input_prompt, model], outputs=[output_image])
+        button_generate.click(process, inputs=[input_prompt, model], outputs=[model, output_image])
     
 block.launch(server_name="0.0.0.0")

@@ -266,7 +266,7 @@ class GUI:
     def save_model(self):
         os.makedirs(self.opt.outdir, exist_ok=True)
     
-        path = os.path.join(self.opt.outdir, self.opt.save_path + '.glb')
+        path = os.path.join(self.opt.outdir, self.opt.save_path)
         self.renderer.export_mesh(path)
 
         print(f"[INFO] save model to {path}.")
@@ -376,10 +376,13 @@ class GUI:
                 with dpg.group(horizontal=True):
                     dpg.add_text("Save: ")
 
+                    def callback_save_model(sender, app_data):
+                        self.save_model()
+
                     dpg.add_button(
                         label="model",
                         tag="_button_save_model",
-                        callback=self.save_model,
+                        callback=self.callback_save_model,
                     )
                     dpg.bind_item_theme("_button_save_model", theme_button)
 
@@ -526,7 +529,7 @@ if __name__ == "__main__":
     parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
-    parser.add_argument("--save_path", type=str, default="out")
+    parser.add_argument("--save_path", type=str, default="out.obj")
     # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
     # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
     parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
