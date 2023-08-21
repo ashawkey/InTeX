@@ -60,7 +60,7 @@ class Renderer(nn.Module):
     @torch.no_grad()
     def export_mesh(self, path):
         self.mesh.write(path)
-
+        
     def render(self, mvp, h, w, bg_color=1):
         # mvp: [4, 4]
 
