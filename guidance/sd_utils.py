@@ -124,7 +124,7 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        guidance_rescale=0.7,
+        guidance_rescale=0,
         control_images=None,
         latents=None,
     ):
@@ -139,13 +139,13 @@ class StableDiffusion(nn.Module):
         self.scheduler.set_timesteps(num_inference_steps)
 
         for t in self.scheduler.timesteps:
-            # inpaint mask trick
+            # inpaint mask hack
             if 'inpaint' in control_images:
                 mask = control_images['latents_inpaint_mask']
                 latents_original = control_images['latents_original']
                 noise = torch.randn_like(latents_original)
-                latents_original = self.scheduler.add_noise(latents_original, noise, t)
-                latents = latents * mask + latents_original * (1 - mask)
+                latents_original_noisy = self.scheduler.add_noise(latents_original, noise, t)
+                latents = latents * mask + latents_original_noisy * (1 - mask)
 
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)

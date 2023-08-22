@@ -115,12 +115,11 @@ class GUI:
         # vers = [0,]
         # hors = [0,]
 
-        vers = [0, 0,  0,   0,  0,   0,   0,    0,  -30, -30, -30, -30,  30, 30,  30,  30]
+        vers = [0, 0,  0,   0,  0,   0,   0,    0,  -45, -45, -45, -45,  45, 45,  45,  45]
         hors = [0, 45, -45, 90, -90, 135, -135, 180, 45, -45, 135, -135, 45, -45, 135, -135]
 
         start_t = time.time()
 
-        first_iter = True
         for ver, hor in zip(vers, hors):
             # render image
             pose = orbit_camera(ver, hor, self.cam.radius)
@@ -154,7 +153,7 @@ class GUI:
                 control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
             
             # construct inpaint control
-            if 'inpaint' in self.opt.control_mode and not first_iter:
+            if 'inpaint' in self.opt.control_mode:
                 inpaint_image = image.clone()
                 inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
 
@@ -179,10 +178,9 @@ class GUI:
             rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
             # import kiui
+            # kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
             # kiui.vis.plot_image(rgbs)
-            # if not first_iter:
-            #     kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
-
+            
             rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
             print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
@@ -204,7 +202,6 @@ class GUI:
             cur_albedo[mask] /= cnt[mask].repeat(1, 3)
             self.renderer.mesh.albedo = cur_albedo
 
-            first_iter = False
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
