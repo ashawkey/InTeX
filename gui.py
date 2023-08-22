@@ -87,7 +87,7 @@ class GUI:
             self.guidance_embeds = torch.cat([nega, posi], dim=0)
         else:
             self.guidance_embeds = {}
-            for d in ['front', 'side', 'back']:
+            for d in ['front', 'side', 'back', 'top', 'bottom']:
                 posi = self.guidance.get_text_embeds([self.prompt + f', {d} view'])
                 self.guidance_embeds[d] = torch.cat([nega, posi], dim=0)
 
@@ -115,8 +115,9 @@ class GUI:
         # vers = [0,]
         # hors = [0,]
 
-        vers = [0, 0,  0,   0,  0,   0,   0,    0,  -45, -45, -45, -45,  45, 45,  45,  45]
-        hors = [0, 45, -45, 90, -90, 135, -135, 180, 45, -45, 135, -135, 45, -45, 135, -135]
+        # spiral-like camera path...
+        vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
+        hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
 
         start_t = time.time()
 
@@ -138,6 +139,9 @@ class GUI:
             inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
             inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
+
+            if not (inpaint_mask == 1).any():
+                continue
 
             # project-texture mask
             viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
@@ -169,9 +173,12 @@ class GUI:
             if not self.opt.text_dir:
                 rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
             else:
-                if abs(hor) < 30: d = 'front'
-                elif abs(hor) < 150: d = 'side'
-                else: d = 'back'
+                if ver < -60: d = 'top'
+                elif ver > 60: d = 'bottom'
+                else:
+                    if abs(hor) < 60: d = 'front'
+                    elif abs(hor) < 120: d = 'side'
+                    else: d = 'back'
                 rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
