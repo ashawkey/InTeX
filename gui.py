@@ -112,98 +112,99 @@ class GUI:
         self.renderer.mesh.albedo = albedo
         self.renderer.mesh.cnt = cnt 
 
-        vers = [0, -30, 30]
-        hors = [0, 60, -60, 120, -120, 180]
         # vers = [0,]
         # hors = [0,]
+
+        vers = [0, 0,  0,   0,  0,   0,   0,    0,  -30, -30, -30, -30,  30, 30,  30,  30]
+        hors = [0, 45, -45, 90, -90, 135, -135, 180, 45, -45, 135, -135, 45, -45, 135, -135]
 
         start_t = time.time()
 
         first_iter = True
+        for ver, hor in zip(vers, hors):
+            # render image
+            pose = orbit_camera(ver, hor, self.cam.radius)
 
-        for ver in vers:
-            for hor in hors:
+            mvp = self.cam.perspective @ np.linalg.inv(pose)
+            mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
 
-                # render image
-                pose = orbit_camera(ver, hor, self.cam.radius)
+            out = self.renderer.render(mvp, H, W)
 
-                mvp = self.cam.perspective @ np.linalg.inv(pose)
-                mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
+            normal = out['normal'] # [H, W, 3]
+            xyzs = out['xyzs'] # [H, W, 3]
+            alpha = out['alpha'].squeeze() # [H, W]
+            image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
 
-                out = self.renderer.render(mvp, H, W)
+            # inpaint mask
+            inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
+            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
+            inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
-                normal = out['normal'] # [H, W, 3]
-                xyzs = out['xyzs'] # [H, W, 3]
-                alpha = out['alpha'].squeeze() # [H, W]
-                image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+            # project-texture mask
+            viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
+            viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
+            mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
+            mask = mask.view(-1)
 
-                # inpaint mask
-                inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
-                inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
-                inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
+            control_images = {}
+            # construct normal control
+            if 'normal' in self.opt.control_mode:
+                # rotate normal so it always "face camera"
+                rot_normal = (normal * 2 - 1).float() @ torch.from_numpy(pose[:3, :3]).float().cuda()
+                control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
+            
+            # construct inpaint control
+            if 'inpaint' in self.opt.control_mode and not first_iter:
+                inpaint_image = image.clone()
+                inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
 
-                # project-texture mask
-                viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
-                viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
-                mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
-                mask = mask.view(-1)
+                # exp: also let it inpaint background... so inpaint is not affected by the white bg color
+                # inpaint_image[(alpha <= 0).expand_as(inpaint_image)] = -1
 
-                control_images = {}
-                # construct normal control
-                if 'normal' in self.opt.control_mode:
-                    control_images['normal'] = normal.permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
-                
-                # construct inpaint control
-                if 'inpaint' in self.opt.control_mode and not first_iter:
-                    inpaint_image = image.clone()
-                    inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+                control_images['inpaint'] = inpaint_image
+                # mask hack to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+                latents_inpaint_mask = F.interpolate(inpaint_mask, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                control_images['latents_inpaint_mask'] = latents_inpaint_mask
+                control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
+            
+            if not self.opt.text_dir:
+                rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
+            else:
+                if abs(hor) < 30: d = 'front'
+                elif abs(hor) < 150: d = 'side'
+                else: d = 'back'
+                rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
+            
+            # apply mask to make sure non-inpaint region is not changed
+            rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
-                    # exp: also let it inpaint background... so inpaint is not affected by the white bg color
-                    # inpaint_image[(alpha <= 0).expand_as(inpaint_image)] = -1
+            # import kiui
+            # kiui.vis.plot_image(rgbs)
+            # if not first_iter:
+            #     kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
 
-                    control_images['inpaint'] = inpaint_image
-                    # mask hack to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                    latents_inpaint_mask = F.interpolate(inpaint_mask, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
-                    control_images['latents_inpaint_mask'] = latents_inpaint_mask
-                    control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
-                
-                if not self.opt.text_dir:
-                    rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
-                else:
-                    if abs(hor) < 30: d = 'front'
-                    elif abs(hor) < 150: d = 'side'
-                    else: d = 'back'
-                    rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
-                
-                # apply mask to make sure non-inpaint region is not changed
-                # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+            rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
+            print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
-                # import kiui
-                # if not first_iter:
-                #     kiui.vis.plot_image(inpaint_image.clamp(0, 1), rgbs)
+            # grid put
+            uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
+            rgbs = rgbs.view(-1, 3)[mask]
 
-                rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
-                print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
+            cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
+            
+            # albedo += cur_albedo
+            # cnt += cur_cnt
+            mask = cnt.squeeze(-1) < 0.1
+            albedo[mask] += cur_albedo[mask]
+            cnt[mask] += cur_cnt[mask]
 
-                # grid put
-                uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
-                rgbs = rgbs.view(-1, 3)[mask]
+            # update mesh texture for rendering
+            mask = cnt.squeeze(-1) > 0        
+            cur_albedo = albedo.clone()
+            cur_albedo[mask] /= cnt[mask].repeat(1, 3)
+            self.renderer.mesh.albedo = cur_albedo
 
-                cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
-                
-                # albedo += cur_albedo
-                # cnt += cur_cnt
-                mask = cnt.squeeze(-1) < 0.1
-                albedo[mask] += cur_albedo[mask]
-                cnt[mask] += cur_cnt[mask]
-
-                # update mesh texture for rendering
-                mask = cnt.squeeze(-1) > 0        
-                cur_albedo = albedo.clone()
-                cur_albedo[mask] /= cnt[mask].repeat(1, 3)
-                self.renderer.mesh.albedo = cur_albedo
-
-                first_iter = False
+            first_iter = False
         
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)

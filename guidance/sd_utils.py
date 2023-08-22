@@ -124,7 +124,7 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        guidance_rescale=0,
+        guidance_rescale=0.7,
         control_images=None,
         latents=None,
     ):
