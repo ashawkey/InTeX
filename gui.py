@@ -119,8 +119,8 @@ class GUI:
         # vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
         # hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
 
-        # better to gen a back-view first...
-        vers = [0, 0, -45,    0,   0, -89.9,  0,   0, 89.9,   0,    0]
+        # better to generate a top-back-view earlier
+        vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
         hors = [0, 180, 0,   45, -45,     0, 90, -90,    0, 135, -135]
 
         start_t = time.time()
