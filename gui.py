@@ -121,18 +121,14 @@ class GUI:
 
         # better to generate a top-back-view earlier
         vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
-        hors = [0, 180, 0,   45, -45,     0, 90, -90,    0, 135, -135]
+        hors = [0, 180,   0, 45, -45,     0, 90, -90,    0, 135, -135]
 
         start_t = time.time()
 
         for ver, hor in zip(vers, hors):
             # render image
             pose = orbit_camera(ver, hor, self.cam.radius)
-
-            mvp = self.cam.perspective @ np.linalg.inv(pose)
-            mvp = torch.from_numpy(mvp.astype(np.float32)).to(self.device)
-
-            out = self.renderer.render(mvp, H, W)
+            out = self.renderer.render(pose, self.cam.perspective, H, W)
 
             normal = out['normal'] # [H, W, 3]
             xyzs = out['xyzs'] # [H, W, 3]
@@ -141,24 +137,25 @@ class GUI:
 
             # inpaint mask
             inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
-            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
+            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=9, sigma=10) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
             if not (inpaint_mask == 1).any():
                 continue
 
-            # project-texture mask
-            viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
-            viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
-            mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
-            mask = mask.view(-1)
-
             control_images = {}
+
             # construct normal control
             if 'normal' in self.opt.control_mode:
                 # rotate normal so it always "face camera"
                 rot_normal = (normal * 2 - 1).float() @ torch.from_numpy(pose[:3, :3]).float().cuda()
                 control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
+            
+            # construct depth control
+            if 'depth' in self.opt.control_mode:
+                depth = out['depth']
+                depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+                control_images['depth'] = depth.view(1, 1, H, W).repeat(1, 3, 1, 1) # [1, 3, H, W]
             
             # construct inpaint control
             if 'inpaint' in self.opt.control_mode:
@@ -190,6 +187,7 @@ class GUI:
 
             if self.opt.vis:
                 import kiui
+                # kiui.vis.plot_image(control_images['depth'])
                 kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
                 kiui.vis.plot_image(rgbs)
             
@@ -197,16 +195,22 @@ class GUI:
             print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
             # grid put
+            # project-texture mask
+            viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
+            viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
+            mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
+            mask = mask.view(-1)
+
             uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
             rgbs = rgbs.view(-1, 3)[mask]
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
-            # albedo += cur_albedo
-            # cnt += cur_cnt
-            mask = cnt.squeeze(-1) < 0.1
-            albedo[mask] += cur_albedo[mask]
-            cnt[mask] += cur_cnt[mask]
+            albedo += cur_albedo
+            cnt += cur_cnt
+            # mask = cnt.squeeze(-1) < 0.1
+            # albedo[mask] += cur_albedo[mask]
+            # cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0        
@@ -264,9 +268,7 @@ class GUI:
         if self.need_update:
             # render image
 
-            mvp = torch.from_numpy(self.cam.mvp.astype(np.float32)).to(self.device)
-
-            out = self.renderer.render(mvp, self.H, self.W)
+            out = self.renderer.render(self.cam.pose, self.cam.perspective, self.H, self.W)
 
             buffer_image = out[self.mode]  # [H, W, 3]
 
@@ -409,7 +411,7 @@ class GUI:
                     dpg.add_button(
                         label="model",
                         tag="_button_save_model",
-                        callback=self.callback_save_model,
+                        callback=callback_save_model,
                     )
                     dpg.bind_item_theme("_button_save_model", theme_button)
 
@@ -551,10 +553,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--posi_prompt", type=str, default="high quality, masterpiece, 3d, cartoon, simple")
-    parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
+    parser.add_argument("--posi_prompt", type=str, default="masterpiece, high quality")
+    parser.add_argument("--nega_prompt", type=str, default="bad quality, worst quality")
     parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
-    # parser.add_argument("--control_mode", action='append', default=['normal'])
+    # parser.add_argument("--control_mode", action='append', default=['depth'])
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
     parser.add_argument("--save_path", type=str, default="out.obj")

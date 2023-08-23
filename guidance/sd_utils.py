@@ -79,6 +79,9 @@ class StableDiffusion(nn.Module):
             if "normal" in self.control_mode:
                 self.controlnet['normal'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_normalbae",torch_dtype=self.dtype).to(self.device)
                 self.controlnet_conditioning_scale['normal'] = 1.0
+            if "depth" in self.control_mode:
+                self.controlnet['depth'] = ControlNetModel.from_pretrained("lllyasviel/control_v11f1p_sd15_depth",torch_dtype=self.dtype).to(self.device)
+                self.controlnet_conditioning_scale['depth'] = 1.0
             if "inpaint" in self.control_mode:
                 self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.dtype).to(self.device)
                 self.controlnet_conditioning_scale['inpaint'] = 1.0

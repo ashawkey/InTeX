@@ -61,8 +61,7 @@ class Renderer(nn.Module):
     def export_mesh(self, path):
         self.mesh.write(path)
         
-    def render(self, mvp, h, w, bg_color=1):
-        # mvp: [4, 4]
+    def render(self, pose, proj, h, w, bg_color=1):
 
         results = {}
 
@@ -70,9 +69,15 @@ class Renderer(nn.Module):
         v = self.mesh.v
 
         # get v_clip and render rgb
-        v_clip = torch.matmul(F.pad(v, pad=(0, 1), mode='constant', value=1.0), torch.transpose(mvp, 0, 1)).float().unsqueeze(0) # [1, N, 4]
+        pose = torch.from_numpy(pose.astype(np.float32)).to(v.device)
+        proj = torch.from_numpy(proj.astype(np.float32)).to(v.device)
 
+        v_cam = torch.matmul(F.pad(v, pad=(0, 1), mode='constant', value=1.0), torch.inverse(pose).T).float().unsqueeze(0)
+        v_clip = v_cam @ proj.T
         rast, rast_db = dr.rasterize(self.glctx, v_clip, self.mesh.f, (h, w))
+
+        depth, _ = dr.interpolate(-v_cam[..., [2]], rast, self.mesh.f) # [1, H, W, 1]
+        depth = depth.squeeze(0) # [H, W, 1]
 
         alpha = (rast[..., 3:] > 0).float()
 
@@ -93,8 +98,7 @@ class Renderer(nn.Module):
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
         alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
-        depth = rast[0, :, :, [2]] # [H, W] NOTE: not cam space depth, but clip space...
-        
+
         albedo = albedo + (1 - alpha) * bg_color
 
         # extra texture
