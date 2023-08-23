@@ -107,6 +107,13 @@ class Renderer(nn.Module):
             cnt = torch.where(rast[..., 3:] > 0, cnt, torch.tensor(1).to(cnt.device)) # remove background (1 means no-inpaint)
             cnt = dr.antialias(cnt, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
             results['cnt'] = cnt
+        
+        if hasattr(self.mesh, 'ori_albedo'):
+            ori_albedo = dr.texture(self.mesh.ori_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
+            ori_albedo = torch.where(rast[..., 3:] > 0, ori_albedo, torch.tensor(0).to(ori_albedo.device))
+            ori_albedo = dr.antialias(ori_albedo, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
+            ori_albedo = ori_albedo + (1 - alpha) * bg_color
+            results['ori_image'] = ori_albedo
 
         results['image'] = albedo
         results['alpha'] = alpha

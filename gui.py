@@ -108,7 +108,10 @@ class GUI:
         albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
-        # discard current texture, and also patch texture-cnt to mesh for rendering inpaint mask
+        # keep original texture if using ip2p
+        if 'ip2p' in self.opt.control_mode:
+            self.renderer.mesh.ori_albedo = self.renderer.mesh.albedo.clone()
+        # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
         self.renderer.mesh.albedo = albedo
         self.renderer.mesh.cnt = cnt 
 
@@ -157,6 +160,11 @@ class GUI:
                 depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
                 control_images['depth'] = depth.view(1, 1, H, W).repeat(1, 3, 1, 1) # [1, 3, H, W]
             
+            # construct ip2p control
+            if 'ip2p' in self.opt.control_mode:
+                ori_image = out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                control_images['ip2p'] = ori_image
+
             # construct inpaint control
             if 'inpaint' in self.opt.control_mode:
                 inpaint_image = image.clone()
@@ -171,6 +179,7 @@ class GUI:
                 control_images['latents_inpaint_mask'] = latents_inpaint_mask
                 control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
             
+            
             if not self.opt.text_dir:
                 rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
             else:
@@ -183,12 +192,13 @@ class GUI:
                 rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
-            rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+            # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
             if self.opt.vis:
                 import kiui
                 # kiui.vis.plot_image(control_images['depth'])
-                kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
+                # kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
+                kiui.vis.plot_image(ori_image)
                 kiui.vis.plot_image(rgbs)
             
             rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
@@ -555,7 +565,8 @@ if __name__ == "__main__":
     parser.add_argument("--prompt", type=str, required=True)
     parser.add_argument("--posi_prompt", type=str, default="masterpiece, high quality")
     parser.add_argument("--nega_prompt", type=str, default="bad quality, worst quality")
-    parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
+    # parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
+    parser.add_argument("--control_mode", action='append', default=['normal', 'ip2p', 'inpaint'])
     # parser.add_argument("--control_mode", action='append', default=['depth'])
     # parser.add_argument("--control_mode", default=None)
     parser.add_argument("--outdir", type=str, default="logs")
