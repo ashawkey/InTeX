@@ -116,8 +116,12 @@ class GUI:
         # hors = [0,]
 
         # spiral-like camera path...
-        vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
-        hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
+        # vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
+        # hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
+
+        # better to gen a back-view first...
+        vers = [0, 0, -45,    0,   0, -89.9,  0,   0, 89.9,   0,    0]
+        hors = [0, 180, 0,   45, -45,     0, 90, -90,    0, 135, -135]
 
         start_t = time.time()
 
@@ -184,9 +188,10 @@ class GUI:
             # apply mask to make sure non-inpaint region is not changed
             rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
-            # import kiui
-            # kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
-            # kiui.vis.plot_image(rgbs)
+            if self.opt.vis:
+                import kiui
+                kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
+                kiui.vis.plot_image(rgbs)
             
             rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
             print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
@@ -546,7 +551,7 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--mesh", type=str, required=True)
     parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--posi_prompt", type=str, default="high quality, masterpiece")
+    parser.add_argument("--posi_prompt", type=str, default="high quality, masterpiece, 3d, cartoon, simple")
     parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
     parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
     # parser.add_argument("--control_mode", action='append', default=['normal'])
@@ -559,6 +564,7 @@ if __name__ == "__main__":
     # parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
     parser.add_argument("--wogui", action='store_true')
     parser.add_argument("--text_dir", action='store_true')
+    parser.add_argument("--vis", action='store_true')
     parser.add_argument("--H", type=int, default=800)
     parser.add_argument("--W", type=int, default=800)
     parser.add_argument("--radius", type=float, default=2)
