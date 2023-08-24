@@ -1,16 +1,20 @@
 mesh: ???
 prompt: ???
+front_dir: "+z"
+
+model_key: runwayml/stable-diffusion-v1-5
 posi_prompt: "albedo"
 nega_prompt: "shadow, shading"
 # control_mode: ['inpaint']
 control_mode: ['normal', 'inpaint']
-outdir: logs
-save_path: out.obj
-model_key: runwayml/stable-diffusion-v1-5
-wogui: false
 text_dir: false
+
+wogui: false
 vis: false
 H: 800
 W: 800
 radius: 2
 fovy: 60
+
+outdir: logs
+save_path: out.obj

@@ -54,8 +54,8 @@ class Renderer(nn.Module):
             self.glctx = dr.RasterizeCudaContext()
 
     @torch.no_grad()
-    def load_mesh(self, path):
-        self.mesh = Mesh.load(path)
+    def load_mesh(self, path, front_dir):
+        self.mesh = Mesh.load(path, front_dir=front_dir)
 
     @torch.no_grad()
     def export_mesh(self, path):

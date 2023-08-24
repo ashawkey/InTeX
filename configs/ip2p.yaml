@@ -1,16 +1,20 @@
 mesh: ???
 prompt: ???
+front_dir: "+z"
+
+# model_key: xyn-ai/anything-v4.0
+model_key: philz1337/revanimated
 posi_prompt: "masterpiece, high quality"
 nega_prompt: "bad quality, worst quality"
 control_mode: ['normal', 'ip2p', 'inpaint']
-outdir: logs
-save_path: out.obj
-# model_key: xyn-ai/anything-v4.0
-model_key: philz1337/revanimated
-wogui: false
 text_dir: false
+
+wogui: false
 vis: false
 H: 800
 W: 800
 radius: 2
 fovy: 60
+
+outdir: logs
+save_path: out.obj
