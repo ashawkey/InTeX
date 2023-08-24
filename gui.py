@@ -191,7 +191,7 @@ class GUI:
             rgbs = self.guidance(text_embeds, control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
-            rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+            # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
             if self.opt.vis:
                 import kiui
@@ -215,11 +215,11 @@ class GUI:
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
-            # albedo += cur_albedo
-            # cnt += cur_cnt
-            mask = cnt.squeeze(-1) < 0.1
-            albedo[mask] += cur_albedo[mask]
-            cnt[mask] += cur_cnt[mask]
+            albedo += cur_albedo
+            cnt += cur_cnt
+            # mask = cnt.squeeze(-1) < 0.1
+            # albedo[mask] += cur_albedo[mask]
+            # cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0        
