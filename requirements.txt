@@ -1,6 +1,7 @@
 tqdm
 rich
-ninja
+omegaconf
+
 numpy
 scipy
 scikit-learn
@@ -12,9 +13,6 @@ imageio-ffmpeg
 torch
 einops
 
-# for gui
-dearpygui
-
 # for stable-diffusion
 huggingface_hub
 diffusers >= 0.9.0
@@ -23,6 +21,11 @@ transformers
 
 # for dmtet and mesh export
 xatlas
+plyfile
+pygltflib
 trimesh
 PyMCubes
 pymeshlab
+
+# for gui
+dearpygui

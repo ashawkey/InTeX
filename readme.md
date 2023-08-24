@@ -15,10 +15,10 @@ pip install -r requirements.txt
 ### Usage
 ```bash
 # local gui
-python gui.py --mesh data/dragon.obj --prompt "a pet dragon with rainbow patterns" --save_path dragon_rainbow --text_dir
+python gui.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True 
 
-# cmd
-python gui.py --mesh data/dragon.obj --prompt "a pet dragon with rainbow patterns" --save_path dragon_rainbow --text_dir --wogui
+# cmd (turn off gui)
+python gui.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True wogui=True
 
 # gradio web gui (only allow obj/glb/gltf)
 python app.py

@@ -95,7 +95,7 @@ class GUI:
         print(f'[INFO] loaded guidance model!')
 
     @torch.no_grad()
-    def generate(self, texture_size=512, render_resolution=512):
+    def generate(self, texture_size=1024, render_resolution=512):
 
         print(f'[INFO] start generation...')
 
@@ -119,12 +119,12 @@ class GUI:
         # hors = [0,]
 
         # spiral-like camera path...
-        # vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
-        # hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
+        vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
+        hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
 
         # better to generate a top-back-view earlier
-        vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
-        hors = [0, 180,   0, 45, -45,     0, 90, -90,    0, 135, -135]
+        # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
+        # hors = [0, 180,   0, 45, -45,     0, 90, -90,    0, 135, -135]
 
         start_t = time.time()
 
@@ -140,7 +140,7 @@ class GUI:
 
             # inpaint mask
             inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
-            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=9, sigma=10) # [1, 1, H, W]
+            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=25, sigma=10) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
             if not (inpaint_mask == 1).any():
@@ -197,8 +197,9 @@ class GUI:
             if self.opt.vis:
                 import kiui
                 # kiui.vis.plot_image(control_images['depth'])
+                kiui.vis.plot_image(inpaint_mask)
                 # kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
-                kiui.vis.plot_image(ori_image)
+                # kiui.vis.plot_image(ori_image)
                 kiui.vis.plot_image(rgbs)
             
             rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
@@ -216,11 +217,11 @@ class GUI:
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
-            albedo += cur_albedo
-            cnt += cur_cnt
-            # mask = cnt.squeeze(-1) < 0.1
-            # albedo[mask] += cur_albedo[mask]
-            # cnt[mask] += cur_cnt[mask]
+            # albedo += cur_albedo
+            # cnt += cur_cnt
+            mask = cnt.squeeze(-1) < 0.1
+            albedo[mask] += cur_albedo[mask]
+            cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0        
@@ -559,31 +560,20 @@ class GUI:
 
 if __name__ == "__main__":
     import argparse
+    from omegaconf import OmegaConf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--mesh", type=str, required=True)
-    parser.add_argument("--prompt", type=str, required=True)
-    parser.add_argument("--posi_prompt", type=str, default="masterpiece, high quality")
-    parser.add_argument("--nega_prompt", type=str, default="bad quality, worst quality")
-    # parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
-    parser.add_argument("--control_mode", action='append', default=['normal', 'ip2p', 'inpaint'])
-    # parser.add_argument("--control_mode", action='append', default=['depth'])
-    # parser.add_argument("--control_mode", default=None)
-    parser.add_argument("--outdir", type=str, default="logs")
-    parser.add_argument("--save_path", type=str, default="out.obj")
-    # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
-    # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
-    parser.add_argument("--model_key", type=str, default="philz1337/revanimated")
-    # parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
-    parser.add_argument("--wogui", action='store_true')
-    parser.add_argument("--text_dir", action='store_true')
-    parser.add_argument("--vis", action='store_true')
-    parser.add_argument("--H", type=int, default=800)
-    parser.add_argument("--W", type=int, default=800)
-    parser.add_argument("--radius", type=float, default=2)
-    parser.add_argument("--fovy", type=float, default=60)
+    parser.add_argument("--config", required=True, help="path to the yaml config file")
+    parser.add_argument("--gpu", default="0", help="GPU ID")
 
-    opt = parser.parse_args()
+    args, extras = parser.parse_known_args()
+
+    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
+
+    # override default config from cli
+    opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
+
+    print(opt)
 
     gui = GUI(opt)
 
