@@ -128,19 +128,18 @@ class GUI:
 
         start_t = time.time()
 
+        first_iter = True
+
         for ver, hor in zip(vers, hors):
             # render image
             pose = orbit_camera(ver, hor, self.cam.radius)
             out = self.renderer.render(pose, self.cam.perspective, H, W)
 
-            normal = out['normal'] # [H, W, 3]
-            xyzs = out['xyzs'] # [H, W, 3]
-            alpha = out['alpha'].squeeze() # [H, W]
             image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
 
             # inpaint mask
             inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
-            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=25, sigma=10) # [1, 1, H, W]
+            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=25, sigma=5) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
             if not (inpaint_mask == 1).any():
@@ -150,9 +149,7 @@ class GUI:
 
             # construct normal control
             if 'normal' in self.opt.control_mode:
-                # rotate normal so it always "face camera"
-                rot_normal = (normal * 2 - 1).float() @ torch.from_numpy(pose[:3, :3]).float().cuda()
-                control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
+                control_images['normal'] = out['rot_normal'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
             
             # construct depth control
             if 'depth' in self.opt.control_mode:
@@ -166,7 +163,7 @@ class GUI:
                 control_images['ip2p'] = ori_image
 
             # construct inpaint control
-            if 'inpaint' in self.opt.control_mode:
+            if 'inpaint' in self.opt.control_mode and not first_iter:
                 inpaint_image = image.clone()
                 inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
 
@@ -181,7 +178,7 @@ class GUI:
             
             
             if not self.opt.text_dir:
-                rgbs = self.guidance(self.guidance_embeds, control_images=control_images).float()
+                text_embeds = self.guidance_embeds
             else:
                 if ver < -60: d = 'top'
                 elif ver > 60: d = 'bottom'
@@ -189,16 +186,19 @@ class GUI:
                     if abs(hor) < 60: d = 'front'
                     elif abs(hor) < 120: d = 'side'
                     else: d = 'back'
-                rgbs = self.guidance(self.guidance_embeds[d], control_images=control_images).float()
+                text_embeds = self.guidance_embeds[d]
+
+            rgbs = self.guidance(text_embeds, control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
-            # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+            rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
 
             if self.opt.vis:
                 import kiui
                 # kiui.vis.plot_image(control_images['depth'])
-                kiui.vis.plot_image(inpaint_mask)
-                # kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
+                # kiui.vis.plot_image(inpaint_mask)
+                if not first_iter:
+                    kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
                 # kiui.vis.plot_image(ori_image)
                 kiui.vis.plot_image(rgbs)
             
@@ -207,9 +207,7 @@ class GUI:
 
             # grid put
             # project-texture mask
-            viewdir = safe_normalize(torch.from_numpy(pose[:3, 3]).float().cuda() - xyzs) # [3], surface --> campos
-            viewcos = torch.sum((normal * 2 - 1) * viewdir, dim=-1) # [H, W], in [-1, 1]
-            mask = (alpha > 0) & (viewcos > 0.3)  # [H, W]
+            mask = (out['alpha'] > 0) & (out['viewcos'] > 0.3)  # [H, W, 1]
             mask = mask.view(-1)
 
             uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
@@ -228,6 +226,8 @@ class GUI:
             cur_albedo = albedo.clone()
             cur_albedo[mask] /= cnt[mask].repeat(1, 3)
             self.renderer.mesh.albedo = cur_albedo
+
+            first_iter = False
 
         
         mask = cnt.squeeze(-1) > 0
