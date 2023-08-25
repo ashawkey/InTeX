@@ -9,14 +9,10 @@ import torch
 import torch.nn.functional as F
 from torchvision.transforms.functional import gaussian_blur
 
-import trimesh
-import rembg
-
 from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
 
 from grid_put import mipmap_linear_grid_put_2d
-from mesh import Mesh, safe_normalize
 
 class GUI:
     def __init__(self, opt):
@@ -118,9 +114,13 @@ class GUI:
         # vers = [0,]
         # hors = [0,]
 
-        # spiral-like camera path...
-        vers = [0, -45, 0,    0, -89.9,  0,   0, 89.9,   0,    0,   0]
-        hors = [0, 0,   45, -45,     0, 90, -90,    0, 135, -135, 180]
+        if not self.opt.text_dir:
+            vers = [0] * 4 + [-45] * 4 + [45] * 4
+            hors = [0, 90, -90, 180] + [45, -45, 135, -135] * 2
+        else:
+            # spiral-like camera path...
+            vers = [0, -45, 0,    0, -89.9, 89.9,  0,   0,   0,    0,   0]
+            hors = [0, 0,   45, -45,     0,    0, 90, -90, 135, -135, 180]
 
         # better to generate a top-back-view earlier
         # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
@@ -139,7 +139,7 @@ class GUI:
 
             # inpaint mask
             inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
-            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=25, sigma=5) # [1, 1, H, W]
+            inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
             if not (inpaint_mask == 1).any():
@@ -149,7 +149,9 @@ class GUI:
 
             # construct normal control
             if 'normal' in self.opt.control_mode:
-                control_images['normal'] = out['rot_normal'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                rot_normal = out['rot_normal'] # [H, W, 3]
+                rot_normal[..., 0] *= -1 # align with normalbae: blue = front, red = left, green = top
+                control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
             
             # construct depth control
             if 'depth' in self.opt.control_mode:
@@ -168,7 +170,7 @@ class GUI:
                 inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
 
                 # exp: also let it inpaint background... so inpaint is not affected by the white bg color
-                # inpaint_image[(alpha <= 0).expand_as(inpaint_image)] = -1
+                inpaint_image[(out['alpha'].squeeze(-1) <= 0.01).expand_as(inpaint_image)] = -1
 
                 control_images['inpaint'] = inpaint_image
                 # mask hack to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
@@ -196,6 +198,7 @@ class GUI:
             if self.opt.vis:
                 import kiui
                 # kiui.vis.plot_image(control_images['depth'])
+                kiui.vis.plot_image(control_images['normal'])
                 # kiui.vis.plot_image(inpaint_mask)
                 if not first_iter:
                     kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
@@ -215,11 +218,11 @@ class GUI:
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
-            albedo += cur_albedo
-            cnt += cur_cnt
-            # mask = cnt.squeeze(-1) < 0.1
-            # albedo[mask] += cur_albedo[mask]
-            # cnt[mask] += cur_cnt[mask]
+            # albedo += cur_albedo
+            # cnt += cur_cnt
+            mask = cnt.squeeze(-1) < 0.1
+            albedo[mask] += cur_albedo[mask]
+            cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0        

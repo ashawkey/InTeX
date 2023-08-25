@@ -2,9 +2,9 @@ mesh: ???
 prompt: ???
 front_dir: "+z"
 
-model_key: runwayml/stable-diffusion-v1-5
-posi_prompt: "masterpiece, high quality"
-nega_prompt: "bad quality, low quality"
+model_key: philz1337/revanimated
+posi_prompt: "masterpiece, high quality, diffuse lighting"
+nega_prompt: "bad quality, low quality, shadows, dark"
 # control_mode: ['inpaint']
 control_mode: ['normal', 'inpaint']
 text_dir: false

@@ -55,6 +55,18 @@ class Mesh:
         else:
             mesh = cls.load_trimesh(path, **kwargs)
 
+        # rotate front dir to +z
+        if front_dir == "-z":
+            mesh.v @= torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, -1]], device=mesh.device, dtype=torch.float32).T
+        elif front_dir == "+x":
+            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]], device=mesh.device, dtype=torch.float32).T
+        elif front_dir == "-x":
+            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], device=mesh.device, dtype=torch.float32).T
+        elif front_dir == "+y":
+            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, 1, 0]], device=mesh.device, dtype=torch.float32).T
+        elif front_dir == "-y":
+            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, -1, 0]], device=mesh.device, dtype=torch.float32).T
+        
         # auto-normalize
         if resize:
             mesh.auto_size()
@@ -69,17 +81,6 @@ class Mesh:
         print(f"[Mesh loading] vn: {mesh.vn.shape}, fn: {mesh.fn.shape}")
         print(f"[Mesh loading] vt: {mesh.vt.shape}, ft: {mesh.ft.shape}")
 
-        # rotate front dir to +z
-        if front_dir == "-z":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, -1]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "+x":
-            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "-x":
-            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "+y":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, 1, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "-y":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, -1, 0]], device=mesh.device, dtype=torch.float32).T
 
         return mesh
 
@@ -284,7 +285,7 @@ class Mesh:
     def auto_size(self):
         vmin, vmax = self.aabb()
         self.ori_center = (vmax + vmin) / 2
-        self.ori_scale = 1.8 / torch.max(vmax - vmin).item()
+        self.ori_scale = 1.6 / torch.max(vmax - vmin).item()
         self.v = (self.v - self.ori_center) * self.ori_scale
 
     def auto_normal(self):

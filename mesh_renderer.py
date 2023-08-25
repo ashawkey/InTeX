@@ -92,11 +92,8 @@ class Renderer(nn.Module):
         normal, _ = dr.interpolate(vn.unsqueeze(0).contiguous(), rast, self.mesh.fn)
         normal = safe_normalize(normal[0])
 
-        # rotated normal (always face camera)
+        # rotated normal (where [0, 0, 1] always faces camera)
         rot_normal = normal @ pose[:3, :3]
-
-        # get positions
-        xyzs, _ = dr.interpolate(v.unsqueeze(0).contiguous(), rast, self.mesh.f)
 
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
@@ -118,18 +115,16 @@ class Renderer(nn.Module):
             ori_albedo = ori_albedo + (1 - alpha) * bg_color
             results['ori_image'] = ori_albedo
 
-        # view cos
-        viewdir = safe_normalize(pose[:3, 3] - xyzs) # surface --> campos
-        viewcos = torch.sum(normal * viewdir, dim=-1, keepdim=True) # [1, H, W, 1], in [-1, 1]
-
+        # rot normal z axis is exactly viewdir-normal cosine
+        viewcos = rot_normal[..., [2]]
+        
         # all shaped as [H, W, C]
         results['image'] = albedo
         results['alpha'] = alpha
         results['depth'] = depth
-        results['xyzs'] = xyzs.squeeze(0)
-        results['normal'] = (normal + 1) / 2
-        results['rot_normal'] = (rot_normal + 1) / 2
-        results['viewcos'] = viewcos.squeeze(0)
+        results['normal'] = normal # in [-1, 1]
+        results['rot_normal'] = rot_normal # in [-1, 1]
+        results['viewcos'] = viewcos
         results['uvs'] = texc.squeeze(0)
 
         return results
