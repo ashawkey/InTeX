@@ -115,8 +115,8 @@ class GUI:
         # hors = [0,]
 
         if not self.opt.text_dir:
-            vers = [0] * 4 + [-45] * 4 + [45] * 4
-            hors = [0, 90, -90, 180] + [45, -45, 135, -135] * 2
+            vers = [0] * 8 + [-89.9, 89.9]
+            hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         else:
             # spiral-like camera path...
             vers = [0, -45, 0,    0, -89.9, 89.9,  0,   0,   0,    0,   0]
@@ -142,7 +142,7 @@ class GUI:
             inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
-            if not (inpaint_mask == 1).any():
+            if not (inpaint_mask > 0.5).any():
                 continue
 
             control_images = {}
@@ -198,7 +198,7 @@ class GUI:
             if self.opt.vis:
                 import kiui
                 # kiui.vis.plot_image(control_images['depth'])
-                kiui.vis.plot_image(control_images['normal'])
+                # kiui.vis.plot_image(control_images['normal'])
                 # kiui.vis.plot_image(inpaint_mask)
                 if not first_iter:
                     kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
@@ -218,11 +218,11 @@ class GUI:
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
-            albedo += cur_albedo
-            cnt += cur_cnt
-            # mask = cnt.squeeze(-1) < 0.1
-            # albedo[mask] += cur_albedo[mask]
-            # cnt[mask] += cur_cnt[mask]
+            # albedo += cur_albedo
+            # cnt += cur_cnt
+            mask = cnt.squeeze(-1) < 0.1
+            albedo[mask] += cur_albedo[mask]
+            cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0        

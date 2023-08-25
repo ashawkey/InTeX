@@ -3,7 +3,7 @@ prompt: ???
 front_dir: "+z"
 
 model_key: philz1337/revanimated
-posi_prompt: "masterpiece, high quality, diffuse lighting"
+posi_prompt: "masterpiece, high quality"
 nega_prompt: "bad quality, low quality, shadows, dark"
 # control_mode: ['inpaint']
 control_mode: ['normal', 'inpaint']

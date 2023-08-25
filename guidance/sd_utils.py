@@ -88,7 +88,7 @@ class StableDiffusion(nn.Module):
                 self.controlnet_conditioning_scale['ip2p'] = 1.0
             if "inpaint" in self.control_mode:
                 self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.dtype).to(self.device)
-                self.controlnet_conditioning_scale['inpaint'] = 1.0
+                self.controlnet_conditioning_scale['inpaint'] = 0.5
             
         self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
         # self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
@@ -145,15 +145,14 @@ class StableDiffusion(nn.Module):
 
         self.scheduler.set_timesteps(num_inference_steps)
 
-        # inpaint mask hack
-        if 'inpaint' in control_images:
-            mask = control_images['latents_inpaint_mask']
-            latents_original = control_images['latents_original']
-            noise = torch.randn_like(latents_original)
-            latents_original_noisy = self.scheduler.add_noise(latents_original, noise, self.scheduler.timesteps[0])
-            latents = latents * mask + latents_original_noisy * (1 - mask)
-
         for t in self.scheduler.timesteps:
+            # inpaint mask blend
+            if 'inpaint' in control_images:
+                mask = control_images['latents_inpaint_mask']
+                latents_original = control_images['latents_original']
+                noise = torch.randn_like(latents_original)
+                latents_original_noisy = self.scheduler.add_noise(latents_original, noise, t)
+                latents = latents * mask + latents_original_noisy * (1 - mask)
 
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)
