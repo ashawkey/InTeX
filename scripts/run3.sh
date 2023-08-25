@@ -1,6 +1,6 @@
 python gui.py --gpu 7 --config configs/base.yaml mesh=data4/Laptop.obj prompt="a photo of a laptop computer" save_path=laptop.obj text_dir=False wogui=True front_dir="-z"
 python gui.py --gpu 7 --config configs/base.yaml mesh=data4/chest.obj prompt="a photo of a" save_path=teapot.obj text_dir=False wogui=True
-python gui.py --gpu 7 --config configs/base.yaml mesh=data4/rose.obj prompt="a photo of a red rose" save_path=rose.obj text_dir=False wogui=True
+# python gui.py --gpu 7 --config configs/base.yaml mesh=data4/rose.obj prompt="a photo of a red rose" save_path=rose.obj text_dir=False wogui=True
 
 python gui.py --gpu 7 --config configs/base.yaml mesh=data4/tulip.obj prompt="a photo of a tulip" save_path=tulip.obj text_dir=False wogui=True front_dir="-y"
 python gui.py --gpu 7 --config configs/base.yaml mesh=data4/pineapple.obj prompt="a photo of a pineapple" save_path=pineapple.obj text_dir=False wogui=True front_dir="-y"
