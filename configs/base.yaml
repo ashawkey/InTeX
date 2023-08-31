@@ -3,18 +3,19 @@ prompt: ???
 front_dir: "+z"
 
 model_key: runwayml/stable-diffusion-v1-5
-posi_prompt: "albedo, color, texture, high quality"
-nega_prompt: "bad quality, low quality"
-# control_mode: ['normal', ]
-control_mode: ['normal', 'inpaint']
+# model_key: runwayml/stable-diffusion-inpainting
+# model_key: philz1337/revanimated
+posi_prompt: ""
+nega_prompt: ""
+control_mode: ['depth', 'inpaint']
 text_dir: false
 
-wogui: false
+gui: false
 vis: false
 H: 800
 W: 800
-radius: 2
-fovy: 60
+radius: 2.5
+fovy: 50
 
 outdir: logs
 save_path: out.obj

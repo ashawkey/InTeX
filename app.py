@@ -2,7 +2,7 @@ import numpy as np
 import gradio as gr
 import argparse
 
-from gui import GUI
+from main import GUI
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--mesh", type=str, default=None)
@@ -16,7 +16,7 @@ parser.add_argument("--save_path", type=str, default="out")
 # parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
 # parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
 parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
-parser.add_argument("--wogui", action='store_true')
+parser.add_argument("--gui", action='store_true')
 parser.add_argument("--text_dir", action='store_true')
 parser.add_argument("--H", type=int, default=800)
 parser.add_argument("--W", type=int, default=800)
@@ -24,7 +24,7 @@ parser.add_argument("--radius", type=float, default=2)
 parser.add_argument("--fovy", type=float, default=60)
 
 opt = parser.parse_args()
-opt.wogui = True
+opt.gui = False
 opt.text_dir = True
 opt.save_path = 'out.glb' # use glb to correctly show texture in gr.Model3D
 

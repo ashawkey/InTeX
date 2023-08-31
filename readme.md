@@ -15,10 +15,10 @@ pip install -r requirements.txt
 ### Usage
 ```bash
 # local gui
-python gui.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True 
+python main.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True gui=True
 
 # cmd (turn off gui)
-python gui.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True wogui=True
+python main.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True
 
 # gradio web gui (only allow obj/glb/gltf)
 python app.py

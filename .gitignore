@@ -23,3 +23,5 @@ test.*
 data2
 data3
 data4
+
+test_inpaint.py

@@ -81,7 +81,6 @@ class Mesh:
         print(f"[Mesh loading] vn: {mesh.vn.shape}, fn: {mesh.fn.shape}")
         print(f"[Mesh loading] vt: {mesh.vt.shape}, ft: {mesh.ft.shape}")
 
-
         return mesh
 
     # load from obj file

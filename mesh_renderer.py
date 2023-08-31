@@ -40,28 +40,32 @@ def make_divisible(x, m=8):
     return int(math.ceil(x / m) * m)
 
 class Renderer(nn.Module):
-    def __init__(self, opt):
+    def __init__(self, device, opt):
         
         super().__init__()
 
+        self.device = device
         self.opt = opt
 
         self.mesh = None
 
-        if self.opt.wogui or os.name == 'nt':
+        self.bg_color = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
+        self.bg_normal = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
+
+        if not self.opt.gui or os.name == 'nt':
             self.glctx = dr.RasterizeGLContext()
         else:
             self.glctx = dr.RasterizeCudaContext()
 
     @torch.no_grad()
     def load_mesh(self, path, front_dir):
-        self.mesh = Mesh.load(path, front_dir=front_dir)
+        self.mesh = Mesh.load(path, front_dir=front_dir, device=self.device)
 
     @torch.no_grad()
     def export_mesh(self, path):
         self.mesh.write(path)
         
-    def render(self, pose, proj, h, w, bg_color=1):
+    def render(self, pose, proj, h, w):
 
         results = {}
 
@@ -76,8 +80,11 @@ class Renderer(nn.Module):
         v_clip = v_cam @ proj.T
         rast, rast_db = dr.rasterize(self.glctx, v_clip, self.mesh.f, (h, w))
 
-        depth, _ = dr.interpolate(-v_cam[..., [2]], rast, self.mesh.f) # [1, H, W, 1]
-        depth = depth.squeeze(0) # [H, W, 1]
+        # actually this is disparity (1 / depth), to align with controlnet
+        disp = -1 / (v_cam[..., [2]] + 1e-20)
+        disp = (disp - disp.min()) / (disp.max() - disp.min() + 1e-20)
+        depth, _ = dr.interpolate(disp, rast, self.mesh.f) # [1, H, W, 1]
+        depth = depth.clamp(0, 1).squeeze(0) # [H, W, 1]
 
         alpha = (rast[..., 3:] > 0).float()
 
@@ -95,11 +102,17 @@ class Renderer(nn.Module):
         # rotated normal (where [0, 0, 1] always faces camera)
         rot_normal = normal @ pose[:3, :3]
 
+        # rot normal z axis is exactly viewdir-normal cosine
+        viewcos = rot_normal[..., [2]]
+
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
         alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
 
-        albedo = albedo + (1 - alpha) * bg_color
+        # replace background
+        albedo = albedo + (1 - alpha) * self.bg_color
+        normal = normal + (1 - alpha) * self.bg_normal
+        rot_normal = rot_normal + (1 - alpha) * self.bg_normal
 
         # extra texture
         if hasattr(self.mesh, 'cnt'):
@@ -112,11 +125,9 @@ class Renderer(nn.Module):
             ori_albedo = dr.texture(self.mesh.ori_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
             ori_albedo = torch.where(rast[..., 3:] > 0, ori_albedo, torch.tensor(0).to(ori_albedo.device))
             ori_albedo = dr.antialias(ori_albedo, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
-            ori_albedo = ori_albedo + (1 - alpha) * bg_color
+            ori_albedo = ori_albedo + (1 - alpha) * self.bg_color
             results['ori_image'] = ori_albedo
 
-        # rot normal z axis is exactly viewdir-normal cosine
-        viewcos = rot_normal[..., [2]]
         
         # all shaped as [H, W, C]
         results['image'] = albedo

@@ -88,10 +88,10 @@ class StableDiffusion(nn.Module):
                 self.controlnet_conditioning_scale['ip2p'] = 1.0
             if "inpaint" in self.control_mode:
                 self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.dtype).to(self.device)
-                self.controlnet_conditioning_scale['inpaint'] = 0.5
+                self.controlnet_conditioning_scale['inpaint'] = 1.0
             
-        self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
-        # self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+        # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
+        self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
 
         del pipe
 
@@ -131,7 +131,7 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        guidance_rescale=0,
+        guidance_rescale=0.7,
         control_images=None,
         latents=None,
     ):
@@ -145,7 +145,7 @@ class StableDiffusion(nn.Module):
 
         self.scheduler.set_timesteps(num_inference_steps)
 
-        for t in self.scheduler.timesteps:
+        for i, t in enumerate(self.scheduler.timesteps):
             # inpaint mask blend
             if 'inpaint' in control_images:
                 mask = control_images['latents_inpaint_mask']
@@ -160,27 +160,45 @@ class StableDiffusion(nn.Module):
 
             # controlnet
             if self.control_mode is not None and control_images is not None:
-                # support multi-control mode
-                down_block_res_samples = None
-                mid_block_res_sample = None
-                for mode, controlnet in self.controlnet.items():
-                    # may omit control mode if input is not provided
-                    if mode not in control_images: 
-                        continue
+
+                if False:
+                    # alternate-control mode
+                    if i < 10 or i > 20:
+                        mode = 'inpaint'
+                    else:
+                        mode = 'normal'
                     control_image = control_images[mode]
+                    controlnet = self.controlnet[mode]
                     control_image_input = torch.cat([control_image] * 2)
-                    down_samples, mid_sample = controlnet(
-                        latent_model_input, t, encoder_hidden_states=text_embeddings, 
-                        controlnet_cond=control_image_input, 
+                    down_block_res_samples, mid_block_res_sample = controlnet(
+                        latent_model_input, t, encoder_hidden_states=text_embeddings,
+                        controlnet_cond=control_image_input,
                         conditioning_scale=self.controlnet_conditioning_scale[mode],
                         return_dict=False
                     )
-                    # merge
-                    if down_block_res_samples is None:
-                        down_block_res_samples, mid_block_res_sample = down_samples, mid_sample
-                    else:
-                        down_block_res_samples = [samples_prev + samples_curr for samples_prev, samples_curr in zip(down_block_res_samples, down_samples)]
-                        mid_block_res_sample += mid_sample
+
+                else:
+                    # multi-control mode
+                    down_block_res_samples = None
+                    mid_block_res_sample = None
+                    for mode, controlnet in self.controlnet.items():
+                        # may omit control mode if input is not provided
+                        if mode not in control_images: 
+                            continue
+                        control_image = control_images[mode]
+                        control_image_input = torch.cat([control_image] * 2)
+                        down_samples, mid_sample = controlnet(
+                            latent_model_input, t, encoder_hidden_states=text_embeddings, 
+                            controlnet_cond=control_image_input, 
+                            conditioning_scale=self.controlnet_conditioning_scale[mode],
+                            return_dict=False
+                        )
+                        # merge
+                        if down_block_res_samples is None:
+                            down_block_res_samples, mid_block_res_sample = down_samples, mid_sample
+                        else:
+                            down_block_res_samples = [samples_prev + samples_curr for samples_prev, samples_curr in zip(down_block_res_samples, down_samples)]
+                            mid_block_res_sample += mid_sample
 
                 # predict the noise residual
                 noise_pred = self.unet(

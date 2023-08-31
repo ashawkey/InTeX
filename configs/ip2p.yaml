@@ -9,7 +9,7 @@ nega_prompt: "bad quality, worst quality"
 control_mode: ['normal', 'ip2p', 'inpaint']
 text_dir: false
 
-wogui: false
+gui: false
 vis: false
 H: 800
 W: 800

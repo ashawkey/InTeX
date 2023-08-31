@@ -17,7 +17,7 @@ from grid_put import mipmap_linear_grid_put_2d
 class GUI:
     def __init__(self, opt):
         self.opt = opt  # shared with the trainer's opt to support in-place modification of rendering parameters.
-        self.wogui = opt.wogui # disable gui and run in cmd
+        self.gui = opt.gui # enable gui
         self.W = opt.W
         self.H = opt.H
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
@@ -35,7 +35,7 @@ class GUI:
         self.guidance_embeds = None
 
         # renderer
-        self.renderer = Renderer(opt)
+        self.renderer = Renderer(self.device, opt)
 
         # input mesh
         if self.opt.mesh is not None:
@@ -45,13 +45,13 @@ class GUI:
         self.prompt = self.opt.posi_prompt + ', ' + self.opt.prompt
         self.negative_prompt = self.opt.nega_prompt
 
-        if not self.wogui:
+        if self.gui:
             dpg.create_context()
             self.register_dpg()
             self.test_step()
 
     def __del__(self):
-        if not self.wogui:
+        if self.gui:
             dpg.destroy_context()
 
     def seed_everything(self):
@@ -83,7 +83,7 @@ class GUI:
             self.guidance_embeds = torch.cat([nega, posi], dim=0)
         else:
             self.guidance_embeds = {}
-            for d in ['front', 'side', 'back', 'top', 'bottom']:
+            for d in ['front', 'side', 'back', 'overhead', 'bottom']:
                 posi = self.guidance.get_text_embeds([self.prompt + f', {d} view'])
                 self.guidance_embeds[d] = torch.cat([nega, posi], dim=0)
 
@@ -135,10 +135,27 @@ class GUI:
             pose = orbit_camera(ver, hor, self.cam.radius)
             out = self.renderer.render(pose, self.cam.perspective, H, W)
 
-            image = out['image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+            # valid crop region with fixed aspect ratio
+            valid_pixels = out['alpha'].squeeze(-1).nonzero() # [N, 2]
+            min_h, max_h = valid_pixels[:, 0].min().item(), valid_pixels[:, 0].max().item()
+            min_w, max_w = valid_pixels[:, 1].min().item(), valid_pixels[:, 1].max().item()
+            
+            size = max(max_h - min_h + 1, max_w - min_w + 1) * 1.1
+            h_start = min(min_h, max_h) - (size - (max_h - min_h + 1)) / 2
+            w_start = min(min_w, max_w) - (size - (max_w - min_w + 1)) / 2
+
+            min_h = int(h_start)
+            min_w = int(w_start)
+            max_h = int(min_h + size)
+            max_w = int(min_w + size)
+
+            def _crop(x, mode='bilinear'):
+                return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], (512, 512), mode=mode)
+
+            image = _crop(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
 
             # inpaint mask
-            inpaint_mask = out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous() < 0.1 # [1, 1, H, W]
+            inpaint_mask = _crop(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous()) < 0.1 # [1, 1, H, W]
             inpaint_mask = gaussian_blur(inpaint_mask.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
             inpaint_mask[inpaint_mask > 0.5] = 1 # do not mix any inpaint region
 
@@ -151,17 +168,17 @@ class GUI:
             if 'normal' in self.opt.control_mode:
                 rot_normal = out['rot_normal'] # [H, W, 3]
                 rot_normal[..., 0] *= -1 # align with normalbae: blue = front, red = left, green = top
-                control_images['normal'] = rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5 # [1, 3, H, W]
+                control_images['normal'] = _crop(rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5) # [1, 3, H, W]
             
             # construct depth control
             if 'depth' in self.opt.control_mode:
                 depth = out['depth']
-                depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
-                control_images['depth'] = depth.view(1, 1, H, W).repeat(1, 3, 1, 1) # [1, 3, H, W]
+                # depth = (depth - depth.min()) / (depth.max() - depth.min() + 1e-20)
+                control_images['depth'] = _crop(depth.view(1, 1, H, W)).repeat(1, 3, 1, 1) # [1, 3, H, W]
             
             # construct ip2p control
             if 'ip2p' in self.opt.control_mode:
-                ori_image = out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous() # [1, 3, H, W]
+                ori_image = _crop(out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
                 control_images['ip2p'] = ori_image
 
             # construct inpaint control
@@ -170,10 +187,11 @@ class GUI:
                 inpaint_image[inpaint_mask.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
 
                 # exp: also let it inpaint background... so inpaint is not affected by the white bg color
-                inpaint_image[(out['alpha'].squeeze(-1) <= 0.01).expand_as(inpaint_image)] = -1
+                # inpaint_image[(out['alpha'].squeeze(-1) <= 0.01).expand_as(inpaint_image)] = -1
 
                 control_images['inpaint'] = inpaint_image
-                # mask hack to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+
+                # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
                 latents_inpaint_mask = F.interpolate(inpaint_mask, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_inpaint_mask'] = latents_inpaint_mask
                 control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
@@ -182,7 +200,7 @@ class GUI:
             if not self.opt.text_dir:
                 text_embeds = self.guidance_embeds
             else:
-                if ver < -60: d = 'top'
+                if ver < -60: d = 'overhead'
                 elif ver > 60: d = 'bottom'
                 else:
                     if abs(hor) < 60: d = 'front'
@@ -193,28 +211,31 @@ class GUI:
             rgbs = self.guidance(text_embeds, control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
-            rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+            # rgbs = image * (1 - inpaint_mask) + rgbs * inpaint_mask
+
 
             if self.opt.vis:
                 import kiui
-                # kiui.vis.plot_image(control_images['depth'])
-                # kiui.vis.plot_image(control_images['normal'])
+                if 'depth' in self.opt.control_mode:
+                    kiui.vis.plot_image(control_images['depth'])
+                if 'normal' in self.opt.control_mode:
+                    kiui.vis.plot_image(control_images['normal'])
                 # kiui.vis.plot_image(inpaint_mask)
-                if not first_iter:
+                if 'inpaint' in self.opt.control_mode and not first_iter:
                     kiui.vis.plot_image(inpaint_image.clamp(0, 1).float())
                 # kiui.vis.plot_image(ori_image)
                 kiui.vis.plot_image(rgbs)
-            
-            rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous() # [H, W, 3]
-            print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
             # grid put
             # project-texture mask
             mask = (out['alpha'] > 0) & (out['viewcos'] > 0.5)  # [H, W, 1]
-            mask = mask.view(-1)
+            mask = _crop(mask.view(1, 1, H, W).float(), 'nearest').view(-1).bool()
+            uvs = _crop(out['uvs'].permute(2, 0, 1).unsqueeze(0).contiguous())
 
-            uvs = out['uvs'].view(-1, 2).clamp(0, 1)[mask]
-            rgbs = rgbs.view(-1, 3)[mask]
+            uvs = uvs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 2)[mask]
+            rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 3)[mask]
+            
+            print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             
@@ -232,35 +253,34 @@ class GUI:
 
             first_iter = False
 
-        
         mask = cnt.squeeze(-1) > 0
         albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
 
-        mask = mask.view(h, w)
-        albedo = albedo.detach().cpu().numpy()
-        mask = mask.detach().cpu().numpy()
+        ## dilate texture
+        # mask = mask.view(h, w)
+        # albedo = albedo.detach().cpu().numpy()
+        # mask = mask.detach().cpu().numpy()
 
-        # dilate texture
-        from sklearn.neighbors import NearestNeighbors
-        from scipy.ndimage import binary_dilation, binary_erosion
+        # from sklearn.neighbors import NearestNeighbors
+        # from scipy.ndimage import binary_dilation, binary_erosion
 
-        inpaint_region = binary_dilation(mask, iterations=32)
-        inpaint_region[mask] = 0
+        # inpaint_region = binary_dilation(mask, iterations=32)
+        # inpaint_region[mask] = 0
 
-        search_region = mask.copy()
-        not_search_region = binary_erosion(search_region, iterations=3)
-        search_region[not_search_region] = 0
+        # search_region = mask.copy()
+        # not_search_region = binary_erosion(search_region, iterations=3)
+        # search_region[not_search_region] = 0
 
-        search_coords = np.stack(np.nonzero(search_region), axis=-1)
-        inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
+        # search_coords = np.stack(np.nonzero(search_region), axis=-1)
+        # inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
 
-        knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
-        _, indices = knn.kneighbors(inpaint_coords)
+        # knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
+        # _, indices = knn.kneighbors(inpaint_coords)
 
-        albedo[tuple(inpaint_coords.T)] = albedo[tuple(search_coords[indices[:, 0]].T)]
+        # albedo[tuple(inpaint_coords.T)] = albedo[tuple(search_coords[indices[:, 0]].T)]
 
-        self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
-        # self.renderer.mesh.albedo = albedo
+        # self.renderer.mesh.albedo = torch.from_numpy(albedo).to(self.device)
+        self.renderer.mesh.albedo = albedo
 
         torch.cuda.synchronize()
         end_t = time.time()
@@ -299,7 +319,7 @@ class GUI:
         torch.cuda.synchronize()
         t = starter.elapsed_time(ender)
 
-        if not self.wogui:
+        if self.gui:
             dpg.set_value("_log_infer_time", f"{t:.4f}ms ({int(1000/t)} FPS)")
             dpg.set_value(
                 "_texture", self.buffer_image
@@ -550,7 +570,7 @@ class GUI:
         dpg.show_viewport()
 
     def render(self):
-        assert not self.wogui
+        assert self.gui
         while dpg.is_dearpygui_running():
             self.test_step()
             dpg.render_dearpygui_frame()
@@ -580,7 +600,7 @@ if __name__ == "__main__":
 
     gui = GUI(opt)
 
-    if opt.wogui:
-        gui.run()
-    else:
+    if opt.gui:
         gui.render()
+    else:
+        gui.run()
