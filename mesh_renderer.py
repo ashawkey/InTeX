@@ -80,9 +80,9 @@ class Renderer(nn.Module):
         v_clip = v_cam @ proj.T
         rast, rast_db = dr.rasterize(self.glctx, v_clip, self.mesh.f, (h, w))
 
-        # actually this is disparity (1 / depth), to align with controlnet
+        # actually disparity (1 / depth), to align with controlnet
         disp = -1 / (v_cam[..., [2]] + 1e-20)
-        disp = (disp - disp.min()) / (disp.max() - disp.min() + 1e-20)
+        disp = (disp - disp.min()) / (disp.max() - disp.min() + 1e-20) # pre-normalize
         depth, _ = dr.interpolate(disp, rast, self.mesh.f) # [1, H, W, 1]
         depth = depth.clamp(0, 1).squeeze(0) # [H, W, 1]
 
@@ -91,8 +91,7 @@ class Renderer(nn.Module):
         # rgb texture
         texc, texc_db = dr.interpolate(self.mesh.vt.unsqueeze(0).contiguous(), rast, self.mesh.ft, rast_db=rast_db, diff_attrs='all')
         albedo = dr.texture(self.mesh.albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear') # [1, H, W, 3]
-        albedo = torch.where(rast[..., 3:] > 0, albedo, torch.tensor(0).to(albedo.device)) # remove background
-
+        
         # get vn and render normal
         vn = self.mesh.vn
         
@@ -110,24 +109,27 @@ class Renderer(nn.Module):
         alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
 
         # replace background
-        albedo = albedo + (1 - alpha) * self.bg_color
-        normal = normal + (1 - alpha) * self.bg_normal
-        rot_normal = rot_normal + (1 - alpha) * self.bg_normal
+        albedo = alpha * albedo + (1 - alpha) * self.bg_color
+        normal = alpha * normal + (1 - alpha) * self.bg_normal
+        rot_normal = alpha * rot_normal + (1 - alpha) * self.bg_normal
 
-        # extra texture
+        # extra texture (hard coded)
         if hasattr(self.mesh, 'cnt'):
             cnt = dr.texture(self.mesh.cnt.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
-            cnt = torch.where(rast[..., 3:] > 0, cnt, torch.tensor(1).to(cnt.device)) # remove background (1 means no-inpaint)
             cnt = dr.antialias(cnt, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
+            cnt = alpha * cnt + (1 - alpha) * 1 # 1 means no-inpaint in background
             results['cnt'] = cnt
         
+        if hasattr(self.mesh, 'viewcos_cache'):
+            viewcos_cache = dr.texture(self.mesh.viewcos_cache.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
+            viewcos_cache = dr.antialias(viewcos_cache, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
+            results['viewcos_cache'] = viewcos_cache
+
         if hasattr(self.mesh, 'ori_albedo'):
             ori_albedo = dr.texture(self.mesh.ori_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
-            ori_albedo = torch.where(rast[..., 3:] > 0, ori_albedo, torch.tensor(0).to(ori_albedo.device))
             ori_albedo = dr.antialias(ori_albedo, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
-            ori_albedo = ori_albedo + (1 - alpha) * self.bg_color
+            ori_albedo = alpha * ori_albedo + (1 - alpha) * self.bg_color
             results['ori_image'] = ori_albedo
-
         
         # all shaped as [H, W, C]
         results['image'] = albedo

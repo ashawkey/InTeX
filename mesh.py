@@ -325,7 +325,7 @@ class Mesh:
             atlas = xatlas.Atlas()
             atlas.add_mesh(v_np, f_np)
             chart_options = xatlas.ChartOptions()
-            # chart_options.max_iterations = 4
+            chart_options.max_iterations = 4
             atlas.generate(chart_options=chart_options)
             vmapping, ft_np, vt_np = atlas[0]  # [N], [M, 3], [N, 2]
 

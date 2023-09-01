@@ -131,7 +131,7 @@ class StableDiffusion(nn.Module):
         width=512,
         num_inference_steps=20,
         guidance_scale=7.5,
-        guidance_rescale=0.7,
+        guidance_rescale=0,
         control_images=None,
         latents=None,
     ):
@@ -147,8 +147,8 @@ class StableDiffusion(nn.Module):
 
         for i, t in enumerate(self.scheduler.timesteps):
             # inpaint mask blend
-            if 'inpaint' in control_images:
-                mask = control_images['latents_inpaint_mask']
+            if 'latents_mask' in control_images:
+                mask = control_images['latents_mask']
                 latents_original = control_images['latents_original']
                 noise = torch.randn_like(latents_original)
                 latents_original_noisy = self.scheduler.add_noise(latents_original, noise, t)
@@ -161,51 +161,45 @@ class StableDiffusion(nn.Module):
             # controlnet
             if self.control_mode is not None and control_images is not None:
 
-                if False:
-                    # alternate-control mode
-                    if i < 10 or i > 20:
-                        mode = 'inpaint'
+                # multi-control mode                
+                noise_pred = []
+
+                for mode, controlnet in self.controlnet.items():
+                    # may omit control mode if input is not provided
+                    if mode not in control_images: continue
+                    
+                    # special handling inpaint
+                    if mode == 'inpaint':
+                        control_image = control_images['inpaint']
+                        scale = 1 # i / num_inference_steps
                     else:
-                        mode = 'normal'
-                    control_image = control_images[mode]
-                    controlnet = self.controlnet[mode]
+                        control_image = control_images[mode]
+                        # ugly...
+                        if 'inpaint' in control_images:
+                            scale = 1 # 1 - i / num_inference_steps
+                        else:
+                            scale = 1
+
                     control_image_input = torch.cat([control_image] * 2)
-                    down_block_res_samples, mid_block_res_sample = controlnet(
-                        latent_model_input, t, encoder_hidden_states=text_embeddings,
-                        controlnet_cond=control_image_input,
-                        conditioning_scale=self.controlnet_conditioning_scale[mode],
+                    down_samples, mid_sample = controlnet(
+                        latent_model_input, t, encoder_hidden_states=text_embeddings, 
+                        controlnet_cond=control_image_input, 
+                        conditioning_scale=self.controlnet_conditioning_scale[mode] * scale,
                         return_dict=False
                     )
 
-                else:
-                    # multi-control mode
-                    down_block_res_samples = None
-                    mid_block_res_sample = None
-                    for mode, controlnet in self.controlnet.items():
-                        # may omit control mode if input is not provided
-                        if mode not in control_images: 
-                            continue
-                        control_image = control_images[mode]
-                        control_image_input = torch.cat([control_image] * 2)
-                        down_samples, mid_sample = controlnet(
-                            latent_model_input, t, encoder_hidden_states=text_embeddings, 
-                            controlnet_cond=control_image_input, 
-                            conditioning_scale=self.controlnet_conditioning_scale[mode],
-                            return_dict=False
-                        )
-                        # merge
-                        if down_block_res_samples is None:
-                            down_block_res_samples, mid_block_res_sample = down_samples, mid_sample
-                        else:
-                            down_block_res_samples = [samples_prev + samples_curr for samples_prev, samples_curr in zip(down_block_res_samples, down_samples)]
-                            mid_block_res_sample += mid_sample
+                    # predict the noise residual
+                    noise_pred_cur = self.unet(
+                        latent_model_input, t, encoder_hidden_states=text_embeddings, 
+                        down_block_additional_residuals=down_samples, 
+                        mid_block_additional_residual=mid_sample
+                    ).sample
 
-                # predict the noise residual
-                noise_pred = self.unet(
-                    latent_model_input, t, encoder_hidden_states=text_embeddings, 
-                    down_block_additional_residuals=down_block_res_samples, 
-                    mid_block_additional_residual=mid_block_res_sample
-                ).sample
+                    # merge after unet
+                    noise_pred.append(noise_pred_cur)
+                
+                noise_pred = torch.stack(noise_pred, dim=0).mean(dim=0)
+                
             else:
                 noise_pred = self.unet(
                     latent_model_input, t, encoder_hidden_states=text_embeddings,

@@ -2,19 +2,21 @@ mesh: ???
 prompt: ???
 front_dir: "+z"
 
+# model_key: runwayml/stable-diffusion-v1-5
 # model_key: xyn-ai/anything-v4.0
 model_key: philz1337/revanimated
 posi_prompt: "masterpiece, high quality"
-nega_prompt: "bad quality, worst quality"
-control_mode: ['normal', 'ip2p', 'inpaint']
+nega_prompt: "bad quality, worst quality, shadows"
+# control_mode: ['ip2p', 'inpaint']
+control_mode: ['depth', 'inpaint']
 text_dir: false
 
 gui: false
 vis: false
 H: 800
 W: 800
-radius: 2
-fovy: 60
+radius: 2.5
+fovy: 50
 
 outdir: logs
 save_path: out.obj
