@@ -161,8 +161,8 @@ class StableDiffusion(nn.Module):
             # controlnet
             if self.control_mode is not None and control_images is not None:
 
-                # multi-control mode                
-                noise_pred = []
+                # multi-control mode [only for 2 modes...]
+                noise_pred = 0
 
                 for mode, controlnet in self.controlnet.items():
                     # may omit control mode if input is not provided
@@ -171,20 +171,21 @@ class StableDiffusion(nn.Module):
                     # special handling inpaint
                     if mode == 'inpaint':
                         control_image = control_images['inpaint']
-                        scale = 1 # i / num_inference_steps
+                        # weight = (1 - control_images['latents_mask_weight'])
+                        weight = max(0, 0.8 - i / num_inference_steps)
                     else:
                         control_image = control_images[mode]
-                        # ugly...
                         if 'inpaint' in control_images:
-                            scale = 1 # 1 - i / num_inference_steps
+                            weight = (0.2 + min(0.8, i / num_inference_steps)) / (len(self.controlnet) - 1)
+                            # weight = (control_images['latents_mask_weight'])
                         else:
-                            scale = 1
+                            weight = 1 / (len(self.controlnet) - 1)
 
                     control_image_input = torch.cat([control_image] * 2)
                     down_samples, mid_sample = controlnet(
                         latent_model_input, t, encoder_hidden_states=text_embeddings, 
                         controlnet_cond=control_image_input, 
-                        conditioning_scale=self.controlnet_conditioning_scale[mode] * scale,
+                        conditioning_scale=self.controlnet_conditioning_scale[mode],
                         return_dict=False
                     )
 
@@ -196,9 +197,8 @@ class StableDiffusion(nn.Module):
                     ).sample
 
                     # merge after unet
-                    noise_pred.append(noise_pred_cur)
-                
-                noise_pred = torch.stack(noise_pred, dim=0).mean(dim=0)
+                    # TODO idea: region-based merge, different local weight for depth and inpaint
+                    noise_pred = noise_pred + weight * noise_pred_cur
                 
             else:
                 noise_pred = self.unet(

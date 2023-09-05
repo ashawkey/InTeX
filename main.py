@@ -12,6 +12,8 @@ from torchvision.transforms.functional import gaussian_blur
 from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
 
+from scipy import ndimage
+
 from grid_put import mipmap_linear_grid_put_2d, nearest_grid_put_2d
 
 class GUI:
@@ -91,19 +93,19 @@ class GUI:
         print(f'[INFO] loaded guidance model!')
 
     @torch.no_grad()
-    def generate(self, texture_size=1024, render_resolution=512):
+    def generate(self):
 
         print(f'[INFO] start generation...')
 
         if self.guidance is None:
             self.prepare_guidance()
         
-        h = w = int(texture_size)
-        H = W = int(render_resolution)
+        h = w = int(self.opt.texture_size)
+        H = W = int(self.opt.render_resolution)
 
         albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
-        viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
+        # viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
         # keep original texture if using ip2p
         if 'ip2p' in self.opt.control_mode:
@@ -111,7 +113,7 @@ class GUI:
         # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
         self.renderer.mesh.albedo = albedo
         self.renderer.mesh.cnt = cnt 
-        self.renderer.mesh.viewcos_cache = viewcos_cache
+        # self.renderer.mesh.viewcos_cache = viewcos_cache
 
         # vers = [0,]
         # hors = [0,]
@@ -121,8 +123,8 @@ class GUI:
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         else:
             # spiral-like camera path...
-            vers = [0, -45, 0,    0, -89.9, 89.9,  0,   0,   0,    0,   0]
-            hors = [0, 0,   45, -45,     0,    0, 90, -90, 135, -135, 180]
+            vers = [0,  0,    0, -45, -89.9, 89.9,  0,   0,   0,    0,   0]
+            hors = [0,  45, -45,    0,    0,    0, 90, -90, 135, -135, 180]
 
         # better to generate a top-back-view earlier
         # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
@@ -158,14 +160,19 @@ class GUI:
 
             # trimap: generate
             mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous()) < 0.1 # [1, 1, H, W]
-            mask_generate = gaussian_blur(mask_generate.float(), kernel_size=15, sigma=5) # [1, 1, H, W]
+            mask_generate = gaussian_blur(mask_generate.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
             mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
-            
-            # trimap: refine (contains generate, opposite of keep)
-            viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
 
-            mask_refine = (viewcos_old < viewcos).float()
+            # weight map for mask_generate
+            # mask_weight = (mask_generate > 0.5).float().cpu().numpy().squeeze(0).squeeze(0)
+            # mask_weight = ndimage.distance_transform_edt(mask_weight)#.clip(0, 30) # max pixel dist hardcoded...
+            # mask_weight = (mask_weight - mask_weight.min()) / (mask_weight.max() - mask_weight.min() + 1e-20)
+            # mask_weight = torch.from_numpy(mask_weight).to(self.device).unsqueeze(0).unsqueeze(0)
+
+            # trimap: refine (contains generate, opposite of keep)
+            # viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            # mask_refine = (viewcos_old < viewcos).float()
 
             # import kiui
             # kiui.vis.plot_matrix(viewcos_old, viewcos, mask_refine)
@@ -195,16 +202,22 @@ class GUI:
             if 'inpaint' in self.opt.control_mode and not first_iter:
                 image_generate = image.clone()
                 image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-
-                image_refine = image.clone()
-                image_refine[mask_refine.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-
                 control_images['inpaint'] = image_generate
-                control_images['inpaint_refine'] = image_refine
+
+                # image_refine = image.clone()
+                # image_refine[mask_refine.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+                # control_images['inpaint_refine'] = image_refine
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
                 latents_mask = F.interpolate(mask_generate, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
+                # control_images['mask'] = mask_generate
+                # latents_mask_weight = F.interpolate(mask_weight, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                # control_images['latents_mask_weight'] = (latents_mask_weight > 0.8).float()
+
+                # import kiui
+                # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
+
                 control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
             
             
@@ -265,12 +278,9 @@ class GUI:
             self.renderer.mesh.albedo = cur_albedo
 
             # update viewcos cache
-            viewcos = viewcos.view(-1, 1)[proj_mask]
-            cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
-
-            # kiui.vis.plot_matrix(cur_viewcos.detach().cpu().numpy())
-
-            self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
+            # viewcos = viewcos.view(-1, 1)[proj_mask]
+            # cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
+            # self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
 
             first_iter = False
 
@@ -613,7 +623,7 @@ if __name__ == "__main__":
     args, extras = parser.parse_known_args()
 
     os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
-
+    
     # override default config from cli
     opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
 

@@ -49,7 +49,14 @@ class Renderer(nn.Module):
 
         self.mesh = None
 
-        self.bg_color = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
+        if os.path.exists(opt.bg_image):
+            # load an image as the background
+            bg_image = cv2.imread(opt.bg_image)
+            bg_image = cv2.cvtColor(bg_image, cv2.COLOR_BGR2RGB)
+            bg_image = torch.from_numpy(bg_image.astype(np.float32) / 255).to(self.device)
+            self.bg = F.interpolate(bg_image.permute(2, 0, 1).unsqueeze(0), (opt.render_resolution, opt.render_resolution), mode='bilinear', align_corners=False)[0].permute(1, 2, 0).contiguous()
+        else:
+            self.bg = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
         self.bg_normal = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
 
         if not self.opt.gui or os.name == 'nt':
@@ -109,7 +116,7 @@ class Renderer(nn.Module):
         alpha = dr.antialias(alpha, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]
 
         # replace background
-        albedo = alpha * albedo + (1 - alpha) * self.bg_color
+        albedo = alpha * albedo + (1 - alpha) * self.bg
         normal = alpha * normal + (1 - alpha) * self.bg_normal
         rot_normal = alpha * rot_normal + (1 - alpha) * self.bg_normal
 
@@ -128,7 +135,7 @@ class Renderer(nn.Module):
         if hasattr(self.mesh, 'ori_albedo'):
             ori_albedo = dr.texture(self.mesh.ori_albedo.unsqueeze(0), texc, uv_da=texc_db, filter_mode='linear-mipmap-linear')
             ori_albedo = dr.antialias(ori_albedo, rast, v_clip, self.mesh.f).squeeze(0) # [H, W, 3]
-            ori_albedo = alpha * ori_albedo + (1 - alpha) * self.bg_color
+            ori_albedo = alpha * ori_albedo + (1 - alpha) * self.bg
             results['ori_image'] = ori_albedo
         
         # all shaped as [H, W, C]
