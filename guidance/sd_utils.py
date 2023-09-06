@@ -16,13 +16,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 
 
-def seed_everything(seed):
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    # torch.backends.cudnn.deterministic = True
-    # torch.backends.cudnn.benchmark = True
-
-
 # ref: https://github.com/huggingface/diffusers/blob/v0.20.0/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion.py#L58C1-L69C21
 def rescale_noise_cfg(noise_cfg, noise_pred_text, guidance_rescale=0.0):
     """

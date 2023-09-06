@@ -13,8 +13,9 @@ from cam_utils import orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
 
 from scipy import ndimage
-
+from kornia.morphology import dilation
 from grid_put import mipmap_linear_grid_put_2d, nearest_grid_put_2d
+
 
 class GUI:
     def __init__(self, opt):
@@ -119,12 +120,12 @@ class GUI:
         # hors = [0,]
 
         if not self.opt.text_dir:
-            vers = [-30] * 8 + [-89.9, 89.9]
+            vers = [0] * 8 + [-89.9, 89.9]
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         else:
             # spiral-like camera path...
-            vers = [0,  0,    0, -89.9, 89.9,  0,   0,   0,    0,   0]
-            hors = [0,  45, -45,     0,    0, 90, -90, 135, -135, 180]
+            vers = [0,  0,    0,   0, -89.9, 89.9,  0,   0,   0,    0]
+            hors = [0,  180, 45, -45,     0,    0, 90, -90, 135, -135]
 
         # better to generate a top-back-view earlier
         # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
@@ -159,11 +160,14 @@ class GUI:
             image = _zoom(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
 
             # trimap: generate
-            mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous()) < 0.1 # [1, 1, H, W]
+            mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest') < 0.1 # [1, 1, H, W]
+            mask_generate = mask_generate.float()
 
-            # simply dilate the mask ???
-            mask_generate = gaussian_blur(mask_generate.float(), kernel_size=15, sigma=10) # [1, 1, H, W]
-            mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
+            # dilate and blur mask
+            blur_size = 9
+            mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
+            mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
+            # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
 
             # weight map for mask_generate
             # mask_weight = (mask_generate > 0.5).float().cpu().numpy().squeeze(0).squeeze(0)
@@ -211,7 +215,7 @@ class GUI:
                 # control_images['inpaint_refine'] = image_refine
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask = F.interpolate(mask_generate_blur, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
                 # control_images['mask'] = mask_generate
                 # latents_mask_weight = F.interpolate(mask_weight, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
@@ -230,7 +234,7 @@ class GUI:
                 control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask = F.interpolate(mask_generate_blur, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
                 control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
             
@@ -250,9 +254,10 @@ class GUI:
             
             # apply mask to make sure non-inpaint region is not changed
             # import kiui
-            # kiui.vis.plot_image(mask_generate, rgbs, image)
+            # tmp = rgbs * 0.5 + (mask_generate_blur * 0.5)
+            # kiui.vis.plot_image(tmp)
 
-            rgbs = image * (1 - mask_generate) + rgbs * mask_generate
+            rgbs = image * (1 - mask_generate_blur) + rgbs * mask_generate_blur
 
             if self.opt.vis:
                 import kiui
