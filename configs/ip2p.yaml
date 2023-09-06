@@ -7,8 +7,7 @@ front_dir: "+z"
 model_key: philz1337/revanimated
 posi_prompt: "masterpiece, high quality"
 nega_prompt: "bad quality, worst quality"
-# control_mode: ['ip2p', 'inpaint']
-control_mode: ['depth', 'inpaint']
+control_mode: ['depth_inpaint']
 text_dir: true
 bg_image: None # assets/brick_wall.png
 texture_size: 2048

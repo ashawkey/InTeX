@@ -49,7 +49,7 @@ class Renderer(nn.Module):
 
         self.mesh = None
 
-        if os.path.exists(opt.bg_image):
+        if opt.bg_image is not None and os.path.exists(opt.bg_image):
             # load an image as the background
             bg_image = cv2.imread(opt.bg_image)
             bg_image = cv2.cvtColor(bg_image, cv2.COLOR_BGR2RGB)

@@ -89,6 +89,9 @@ class StableDiffusion(nn.Module):
             if "inpaint" in self.control_mode:
                 self.controlnet['inpaint'] = ControlNetModel.from_pretrained("lllyasviel/control_v11p_sd15_inpaint",torch_dtype=self.dtype).to(self.device)
                 self.controlnet_conditioning_scale['inpaint'] = 1.0
+            if "depth_inpaint" in self.control_mode:
+                self.controlnet['depth_inpaint'] = ControlNetModel.from_pretrained("ashawkey/control_v11e_sd15_depth_aware_inpaint",torch_dtype=self.dtype).to(self.device)
+                self.controlnet_conditioning_scale['depth_inpaint'] = 1.0
             
         # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
         self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
@@ -161,25 +164,14 @@ class StableDiffusion(nn.Module):
             # controlnet
             if self.control_mode is not None and control_images is not None:
 
-                # multi-control mode [only for 2 modes...]
                 noise_pred = 0
 
                 for mode, controlnet in self.controlnet.items():
                     # may omit control mode if input is not provided
                     if mode not in control_images: continue
                     
-                    # special handling inpaint
-                    if mode == 'inpaint':
-                        control_image = control_images['inpaint']
-                        # weight = (1 - control_images['latents_mask_weight'])
-                        weight = max(0, 0.8 - i / num_inference_steps)
-                    else:
-                        control_image = control_images[mode]
-                        if 'inpaint' in control_images:
-                            weight = (0.2 + min(0.8, i / num_inference_steps)) / (len(self.controlnet) - 1)
-                            # weight = (control_images['latents_mask_weight'])
-                        else:
-                            weight = 1 / (len(self.controlnet) - 1)
+                    control_image = control_images[mode]
+                    weight = 1 / len(self.controlnet)
 
                     control_image_input = torch.cat([control_image] * 2)
                     down_samples, mid_sample = controlnet(

@@ -123,8 +123,8 @@ class GUI:
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         else:
             # spiral-like camera path...
-            vers = [0,  0,    0, -45, -89.9, 89.9,  0,   0,   0,    0,   0]
-            hors = [0,  45, -45,    0,    0,    0, 90, -90, 135, -135, 180]
+            vers = [0,  0,    0, -89.9, 89.9,  0,   0,   0,    0,   0]
+            hors = [0,  45, -45,     0,    0, 90, -90, 135, -135, 180]
 
         # better to generate a top-back-view earlier
         # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
@@ -160,7 +160,9 @@ class GUI:
 
             # trimap: generate
             mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous()) < 0.1 # [1, 1, H, W]
-            mask_generate = gaussian_blur(mask_generate.float(), kernel_size=5, sigma=5) # [1, 1, H, W]
+
+            # simply dilate the mask ???
+            mask_generate = gaussian_blur(mask_generate.float(), kernel_size=15, sigma=10) # [1, 1, H, W]
             mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
 
             # weight map for mask_generate
@@ -199,7 +201,7 @@ class GUI:
                 control_images['ip2p'] = ori_image
 
             # construct inpaint control
-            if 'inpaint' in self.opt.control_mode and not first_iter:
+            if 'inpaint' in self.opt.control_mode:
                 image_generate = image.clone()
                 image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
                 control_images['inpaint'] = image_generate
@@ -217,7 +219,19 @@ class GUI:
 
                 # import kiui
                 # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
+                control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
+            
+            # construct depth-aware-inpaint control
+            if 'depth_inpaint' in self.opt.control_mode:
 
+                image_generate = image.clone()
+                image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+                depth = _zoom(out['depth'].view(1, 1, H, W)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
+                control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
+
+                # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+                latents_mask = F.interpolate(mask_generate, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                control_images['latents_mask'] = latents_mask
                 control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
             
             
@@ -235,6 +249,9 @@ class GUI:
             rgbs = self.guidance(text_embeds, control_images=control_images).float()
             
             # apply mask to make sure non-inpaint region is not changed
+            # import kiui
+            # kiui.vis.plot_image(mask_generate, rgbs, image)
+
             rgbs = image * (1 - mask_generate) + rgbs * mask_generate
 
             if self.opt.vis:
@@ -249,6 +266,9 @@ class GUI:
                 if 'inpaint' in control_images:
                     kiui.vis.plot_image(control_images['inpaint'].clamp(0, 1))
                     # kiui.vis.plot_image(control_images['inpaint_refine'].clamp(0, 1))
+                if 'depth_inpaint' in control_images:
+                    kiui.vis.plot_image(control_images['depth_inpaint'][:, :3].clamp(0, 1))
+                    kiui.vis.plot_image(control_images['depth_inpaint'][:, 3:].clamp(0, 1))
                 kiui.vis.plot_image(rgbs)
 
             # grid put
