@@ -9,6 +9,7 @@ posi_prompt: ""
 nega_prompt: ""
 control_mode: ['depth_inpaint']
 text_dir: false
+camera_path: front
 bg_image: None # assets/brick_wall.png
 texture_size: 2048
 render_resolution: 512

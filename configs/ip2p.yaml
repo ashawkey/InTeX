@@ -9,8 +9,9 @@ posi_prompt: "masterpiece, high quality"
 nega_prompt: "bad quality, worst quality, shadows"
 control_mode: ['depth_inpaint']
 text_dir: true
+camera_path: front
 bg_image: None # assets/brick_wall.png
-texture_size: 1024
+texture_size: 512
 render_resolution: 512
 
 gui: false

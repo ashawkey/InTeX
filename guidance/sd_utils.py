@@ -118,6 +118,35 @@ class StableDiffusion(nn.Module):
         posterior = self.vae.encode(imgs).latent_dist
         latents = posterior.sample() * self.vae.config.scaling_factor
         return latents
+    
+    @torch.no_grad()
+    def refine(self, text_embeddings, pred_rgb,
+               guidance_scale=7.5, steps=50, strength=0.8,
+        ):
+
+        batch_size = pred_rgb.shape[0]
+        latents = self.encode_imgs(pred_rgb.to(self.dtype))
+        # latents = torch.randn((1, 4, 64, 64), device=self.device, dtype=self.dtype)
+
+        self.scheduler.set_timesteps(steps)
+        init_step = int(steps * strength)
+        latents = self.scheduler.add_noise(latents, torch.randn_like(latents), self.scheduler.timesteps[init_step])
+
+        for i, t in enumerate(self.scheduler.timesteps[init_step:]):
+    
+            latent_model_input = torch.cat([latents] * 2)
+
+            noise_pred = self.unet(
+                latent_model_input, t, encoder_hidden_states=text_embeddings,
+            ).sample
+
+            noise_pred_uncond, noise_pred_cond = noise_pred.chunk(2)
+            noise_pred = noise_pred_uncond + guidance_scale * (noise_pred_cond - noise_pred_uncond)
+            
+            latents = self.scheduler.step(noise_pred, t, latents).prev_sample
+
+        imgs = self.decode_latents(latents) # [1, 3, 512, 512]
+        return imgs
 
     @torch.no_grad()
     def __call__(
