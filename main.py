@@ -124,8 +124,8 @@ class GUI:
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         else:
             # spiral-like camera path...
-            vers = [0,  0,    0,   0, -89.9, 89.9,  0,   0,   0,    0]
-            hors = [0,  180, 45, -45,     0,    0, 90, -90, 135, -135]
+            vers = [0,  0,    0, 0,   0,    0, -89.9, 89.9,   0,    0]
+            hors = [0,  45, -45,90, -90, 180,     0,    0, 135, -135]
 
         # better to generate a top-back-view earlier
         # vers = [0, -45, -45,  0,   0, -89.9,  0,   0, 89.9,   0,    0]
@@ -288,7 +288,7 @@ class GUI:
             
             print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
 
-            cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=256, return_count=True)
+            cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=32, return_count=True)
             
             # albedo += cur_albedo
             # cnt += cur_cnt
@@ -643,11 +643,7 @@ if __name__ == "__main__":
 
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", required=True, help="path to the yaml config file")
-    parser.add_argument("--gpu", default="0", help="GPU ID")
-
     args, extras = parser.parse_known_args()
-
-    os.environ["CUDA_VISIBLE_DEVICES"] = args.gpu
     
     # override default config from cli
     opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
