@@ -12,7 +12,7 @@ text_dir: true
 camera_path: front
 bg_image: None # assets/brick_wall.png
 texture_size: 512
-render_resolution: 512
+render_resolution: 1024
 
 gui: false
 vis: false

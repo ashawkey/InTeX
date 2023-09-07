@@ -16,6 +16,8 @@ from scipy import ndimage
 from kornia.morphology import dilation
 from grid_put import mipmap_linear_grid_put_2d, linear_grid_put_2d, nearest_grid_put_2d
 
+import kiui
+
 
 class GUI:
     def __init__(self, opt):
@@ -161,13 +163,13 @@ class GUI:
             max_h = int(min_h + size)
             max_w = int(min_w + size)
 
-            def _zoom(x, mode='bilinear'):
-                return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], (512, 512), mode=mode)
+            def _zoom(x, mode='bilinear', size=(H, W)):
+                return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], size, mode=mode)
 
             image = _zoom(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
 
             # trimap: generate
-            mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest') < 0.1 # [1, 1, H, W]
+            mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), mode='nearest') < 0.1 # [1, 1, H, W]
             mask_generate = mask_generate.float()
 
             # dilate and blur mask
@@ -187,7 +189,6 @@ class GUI:
             # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
             # mask_refine = (viewcos_old < viewcos).float()
 
-            # import kiui
             # kiui.vis.plot_matrix(viewcos_old, viewcos, mask_refine)
 
             if not (mask_generate > 0.5).any():
@@ -199,22 +200,23 @@ class GUI:
             if 'normal' in self.opt.control_mode:
                 rot_normal = out['rot_normal'] # [H, W, 3]
                 rot_normal[..., 0] *= -1 # align with normalbae: blue = front, red = left, green = top
-                control_images['normal'] = _zoom(rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5) # [1, 3, H, W]
+                control_images['normal'] = _zoom(rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5, size=(512, 512)) # [1, 3, H, W]
             
             # construct depth control
             if 'depth' in self.opt.control_mode:
                 depth = out['depth']
-                control_images['depth'] = _zoom(depth.view(1, 1, H, W)).repeat(1, 3, 1, 1) # [1, 3, H, W]
+                control_images['depth'] = _zoom(depth.view(1, 1, H, W), size=(512, 512)).repeat(1, 3, 1, 1) # [1, 3, H, W]
             
             # construct ip2p control
             if 'ip2p' in self.opt.control_mode:
-                ori_image = _zoom(out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
+                ori_image = _zoom(out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous(), size=(512, 512)) # [1, 3, H, W]
                 control_images['ip2p'] = ori_image
 
             # construct inpaint control
             if 'inpaint' in self.opt.control_mode:
                 image_generate = image.clone()
                 image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+                image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
                 control_images['inpaint'] = image_generate
 
                 # image_refine = image.clone()
@@ -222,28 +224,28 @@ class GUI:
                 # control_images['inpaint_refine'] = image_refine
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate_blur, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
                 # control_images['mask'] = mask_generate
-                # latents_mask_weight = F.interpolate(mask_weight, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                # latents_mask_weight = F.interpolate(mask_weight, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
                 # control_images['latents_mask_weight'] = (latents_mask_weight > 0.8).float()
 
-                # import kiui
                 # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
-                control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
+                control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
             
             # construct depth-aware-inpaint control
             if 'depth_inpaint' in self.opt.control_mode:
 
                 image_generate = image.clone()
                 image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-                depth = _zoom(out['depth'].view(1, 1, H, W)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
+                image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
+                depth = _zoom(out['depth'].view(1, 1, H, W), size=(512, 512)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
                 control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate_blur, size=(H//8, W//8), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
-                control_images['latents_original'] = self.guidance.encode_imgs(image.to(self.guidance.dtype)) # [1, 4, 64, 64]
+                control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
             
             
             if not self.opt.text_dir:
@@ -257,17 +259,24 @@ class GUI:
                     else: d = 'back'
                 text_embeds = self.guidance_embeds[d]
 
-            rgbs = self.guidance(text_embeds, control_images=control_images).float()
+            rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
+
+            # performing upscaling (assume 2/4/8x)
+            if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
+                scale = W // rgbs.shape[-1]
+                rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
+                rgbs = (rgbs * 255).astype(np.uint8)
+                rgbs = kiui.sr.sr(rgbs, scale=scale)
+                rgbs = rgbs.astype(np.float32) / 255
+                rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
             
             # apply mask to make sure non-inpaint region is not changed
-            # import kiui
             # tmp = rgbs * 0.5 + (mask_generate_blur * 0.5)
             # kiui.vis.plot_image(tmp)
 
             rgbs = image * (1 - mask_generate_blur) + rgbs * mask_generate_blur
 
             if self.opt.vis:
-                import kiui
                 if 'depth' in control_images:
                     kiui.vis.plot_image(control_images['depth'])
                 if 'normal' in control_images:
@@ -344,7 +353,6 @@ class GUI:
         albedo[tuple(inpaint_coords.T)] = albedo[tuple(search_coords[indices[:, 0]].T)]
 
         # overall deblur by LR then SR
-        # import kiui
         # kiui.vis.plot_image(albedo)
         # albedo = (albedo * 255).astype(np.uint8)
         # albedo = cv2.resize(albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
@@ -355,7 +363,6 @@ class GUI:
         albedo = torch.from_numpy(albedo).to(self.device)
 
         # enhance quality by SD refine...
-        # import kiui
         # kiui.vis.plot_image(albedo.detach().cpu().numpy())
         # text_embeds = self.guidance_embeds if not self.opt.text_dir else self.guidance_embeds['default']
         # albedo = self.guidance.refine(text_embeds, albedo.permute(2,0,1).unsqueeze(0).contiguous(), strength=0.8).squeeze(0).permute(1,2,0).contiguous()
