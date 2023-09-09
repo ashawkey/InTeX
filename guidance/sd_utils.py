@@ -211,7 +211,6 @@ class StableDiffusion(nn.Module):
                     ).sample
 
                     # merge after unet
-                    # TODO idea: region-based merge, different local weight for depth and inpaint
                     noise_pred = noise_pred + weight * noise_pred_cur
                 
             else:

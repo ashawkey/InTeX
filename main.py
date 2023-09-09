@@ -64,6 +64,8 @@ class GUI:
             seed = int(self.seed)
         except:
             seed = np.random.randint(0, 1000000)
+        
+        print(f'[INFO] seed = {seed}')
 
         os.environ["PYTHONHASHSEED"] = str(seed)
         np.random.seed(seed)
@@ -172,6 +174,11 @@ class GUI:
             mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), mode='nearest') < 0.1 # [1, 1, H, W]
             mask_generate = mask_generate.float()
 
+            # trimap: refine (contains generate, opposite of keep)
+            # viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            # mask_refine = (viewcos_old < viewcos).float()
+
             # dilate and blur mask
             blur_size = 9
             mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
@@ -184,10 +191,6 @@ class GUI:
             # mask_weight = (mask_weight - mask_weight.min()) / (mask_weight.max() - mask_weight.min() + 1e-20)
             # mask_weight = torch.from_numpy(mask_weight).to(self.device).unsqueeze(0).unsqueeze(0)
 
-            # trimap: refine (contains generate, opposite of keep)
-            # viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            # mask_refine = (viewcos_old < viewcos).float()
 
             # kiui.vis.plot_matrix(viewcos_old, viewcos, mask_refine)
 
@@ -254,8 +257,8 @@ class GUI:
                 if ver < -60: d = 'overhead'
                 elif ver > 60: d = 'bottom'
                 else:
-                    if abs(hor) < 60: d = 'front'
-                    elif abs(hor) < 120: d = 'side'
+                    if abs(hor) < 30: d = 'front'
+                    elif abs(hor) < 90: d = 'side'
                     else: d = 'back'
                 text_embeds = self.guidance_embeds[d]
 
@@ -337,7 +340,7 @@ class GUI:
         from sklearn.neighbors import NearestNeighbors
         from scipy.ndimage import binary_dilation, binary_erosion
 
-        inpaint_region = binary_dilation(mask, iterations=32)
+        inpaint_region = binary_dilation(mask, iterations=64)
         inpaint_region[mask] = 0
 
         search_region = mask.copy()
