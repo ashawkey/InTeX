@@ -179,6 +179,8 @@ class GUI:
             # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
             # mask_refine = (viewcos_old < viewcos).float()
 
+            # mask_generate = ((mask_generate + mask_refine) > 0).float()
+
             # dilate and blur mask
             blur_size = 9
             mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
@@ -357,10 +359,10 @@ class GUI:
 
         # overall deblur by LR then SR
         # kiui.vis.plot_image(albedo)
-        # albedo = (albedo * 255).astype(np.uint8)
-        # albedo = cv2.resize(albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
-        # albedo = kiui.sr.sr(albedo, scale=4)
-        # albedo = albedo.astype(np.float32) / 255
+        albedo = (albedo * 255).astype(np.uint8)
+        albedo = cv2.resize(albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
+        albedo = kiui.sr.sr(albedo, scale=4)
+        albedo = albedo.astype(np.float32) / 255
         # kiui.vis.plot_image(albedo)
 
         albedo = torch.from_numpy(albedo).to(self.device)
