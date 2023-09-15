@@ -56,7 +56,7 @@ class Renderer(nn.Module):
             bg_image = torch.from_numpy(bg_image.astype(np.float32) / 255).to(self.device)
             self.bg = F.interpolate(bg_image.permute(2, 0, 1).unsqueeze(0), (opt.render_resolution, opt.render_resolution), mode='bilinear', align_corners=False)[0].permute(1, 2, 0).contiguous()
         else:
-            self.bg = torch.tensor([0.9, 0.9, 0.9], dtype=torch.float32, device=self.device)
+            self.bg = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
         self.bg_normal = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
 
         if not self.opt.gui or os.name == 'nt':
