@@ -65,7 +65,7 @@ class Renderer(nn.Module):
             self.glctx = dr.RasterizeCudaContext()
 
     @torch.no_grad()
-    def load_mesh(self, path, front_dir):
+    def load_mesh(self, path):
         if not os.path.exists(path):
             # try downloading from objaverse (treat path as uid)
             import objaverse
@@ -73,7 +73,7 @@ class Renderer(nn.Module):
             path = objects[path]
             print(f'[INFO] load Objaverse from {path}')
 
-        self.mesh = Mesh.load(path, front_dir=front_dir, device=self.device)
+        self.mesh = Mesh.load(path, front_dir=self.opt.front_dir, retex=self.opt.retex, device=self.device)
 
     @torch.no_grad()
     def export_mesh(self, path):

@@ -17,6 +17,7 @@ render_resolution: 512
 gui: false
 vis: false
 interactive: false
+retex: false
 H: 800
 W: 800
 radius: 2.5

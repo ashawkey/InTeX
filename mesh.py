@@ -47,7 +47,7 @@ class Mesh:
         self.ori_scale = 1
 
     @classmethod
-    def load(cls, path=None, resize=True, renormal=True, front_dir='+z', **kwargs):
+    def load(cls, path=None, resize=True, renormal=True, retex=False, front_dir='+z', **kwargs):
         # assume init with kwargs
         if path is None:
             mesh = cls(**kwargs)
@@ -79,7 +79,7 @@ class Mesh:
             mesh.auto_normal()
             print(f"[Mesh loading] vn: {mesh.vn.shape}, fn: {mesh.fn.shape}")
         # auto-fix texcoords
-        if mesh.albedo is not None and mesh.vt is None:
+        if retex or (mesh.albedo is not None and mesh.vt is None):
             mesh.auto_uv(cache_path=path)
             print(f"[Mesh loading] vt: {mesh.vt.shape}, ft: {mesh.ft.shape}")
 

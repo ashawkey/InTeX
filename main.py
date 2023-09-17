@@ -44,7 +44,7 @@ class GUI:
 
         # input mesh
         if self.opt.mesh is not None:
-            self.renderer.load_mesh(self.opt.mesh, self.opt.front_dir)
+            self.renderer.load_mesh(self.opt.mesh)
 
         # input text
         self.prompt = self.opt.posi_prompt + ', ' + self.opt.prompt
