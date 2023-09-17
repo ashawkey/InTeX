@@ -264,7 +264,31 @@ class GUI:
                     else: d = 'back'
                 text_embeds = self.guidance_embeds[d]
 
-            rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
+
+            # prompt to reject & regenerate
+            if self.opt.interactive:
+                cv2.startWindowThread()
+                cv2.namedWindow("Reject?")
+                reject = True
+                while reject:
+                    rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
+
+                    image_compare = torch.cat([image, mask_generate_blur.repeat(1,3,1,1), rgbs], dim=3)
+                    image_compare = image_compare[0].permute(1,2,0).contiguous().detach().cpu().numpy() # [H, W*3, 3]
+                    image_compare = (image_compare * 255).astype(np.uint8)
+                    image_compare = cv2.cvtColor(image_compare, cv2.COLOR_RGB2BGR)
+
+                    kiui.lo(image_compare)
+                    cv2.imshow('Reject?', image_compare)
+                    key = cv2.waitKey(0)
+                    print(key)
+                    if key == 32: # space, adopt current image
+                        reject = False
+                    else: # else, regenerate until satisfying
+                        reject = True 
+                    cv2.destroyAllWindows()
+            else:
+                rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
 
             # performing upscaling (assume 2/4/8x)
             if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
@@ -276,9 +300,6 @@ class GUI:
                 rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
             
             # apply mask to make sure non-inpaint region is not changed
-            # tmp = rgbs * 0.5 + (mask_generate_blur * 0.5)
-            # kiui.vis.plot_image(tmp)
-
             rgbs = image * (1 - mask_generate_blur) + rgbs * mask_generate_blur
 
             if self.opt.vis:
