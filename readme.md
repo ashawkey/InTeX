@@ -17,11 +17,21 @@ pip install -r requirements.txt
 # run
 python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True
 
-# gradio web gui (only allow obj/glb/gltf)
+# visualize intermediate results
+python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True vis=True
+
+# interactive inpaint (using cv2 GUI, press space=accept, other=reject)
+python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True interactive=True
+
+# [experimental] gradio web gui (only allow obj/glb/gltf)
 python app.py
 ```
 
 Automatically download [objaverse](https://objaverse.allenai.org/explore) model by uid:
 ```bash
-python main.py --config configs/base.yaml mesh=u3WYrMucGzUOhnNukx2EfyQqevA prompt="a photo of game controller" save_path=controller.obj
+# auto download the model, and run tex gen.
+python main.py --config configs/base.yaml mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt="a photo of game controller" save_path=controller.obj
+
+# just visualize the downloaded model with original texture
+python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
 ```

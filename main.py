@@ -717,7 +717,7 @@ if __name__ == "__main__":
     from omegaconf import OmegaConf
 
     parser = argparse.ArgumentParser()
-    parser.add_argument("--config", required=True, help="path to the yaml config file")
+    parser.add_argument("--config", default='configs/base.yaml', help="path to the yaml config file")
     args, extras = parser.parse_known_args()
     
     # override default config from cli
