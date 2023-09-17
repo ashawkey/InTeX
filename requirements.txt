@@ -5,6 +5,7 @@ omegaconf
 numpy
 scipy
 scikit-learn
+kornia
 matplotlib
 opencv-python
 imageio
@@ -24,8 +25,7 @@ xatlas
 plyfile
 pygltflib
 trimesh
-PyMCubes
-pymeshlab
+
 
 # for gui
 dearpygui

@@ -165,6 +165,13 @@ class GUI:
             max_h = int(min_h + size)
             max_w = int(min_w + size)
 
+            # crop region is outside rendered image: do not crop at all.
+            if min_h < 0 or min_w < 0 or max_h > H or max_w > W:
+                min_h = 0
+                min_w = 0
+                max_h = H
+                max_w = W
+
             def _zoom(x, mode='bilinear', size=(H, W)):
                 return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], size, mode=mode)
 
@@ -273,6 +280,15 @@ class GUI:
                 while reject:
                     rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
 
+                    # performing upscaling (assume 2/4/8x)
+                    if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
+                        scale = W // rgbs.shape[-1]
+                        rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
+                        rgbs = (rgbs * 255).astype(np.uint8)
+                        rgbs = kiui.sr.sr(rgbs, scale=scale)
+                        rgbs = rgbs.astype(np.float32) / 255
+                        rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
+
                     image_compare = torch.cat([image, mask_generate_blur.repeat(1,3,1,1), rgbs], dim=3)
                     image_compare = image_compare[0].permute(1,2,0).contiguous().detach().cpu().numpy() # [H, W*3, 3]
                     image_compare = (image_compare * 255).astype(np.uint8)
@@ -281,7 +297,6 @@ class GUI:
                     kiui.lo(image_compare)
                     cv2.imshow('Reject?', image_compare)
                     key = cv2.waitKey(0)
-                    print(key)
                     if key == 32: # space, adopt current image
                         reject = False
                     else: # else, regenerate until satisfying
@@ -290,14 +305,14 @@ class GUI:
             else:
                 rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
 
-            # performing upscaling (assume 2/4/8x)
-            if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
-                scale = W // rgbs.shape[-1]
-                rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
-                rgbs = (rgbs * 255).astype(np.uint8)
-                rgbs = kiui.sr.sr(rgbs, scale=scale)
-                rgbs = rgbs.astype(np.float32) / 255
-                rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
+                # performing upscaling (assume 2/4/8x)
+                if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
+                    scale = W // rgbs.shape[-1]
+                    rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
+                    rgbs = (rgbs * 255).astype(np.uint8)
+                    rgbs = kiui.sr.sr(rgbs, scale=scale)
+                    rgbs = rgbs.astype(np.float32) / 255
+                    rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
             
             # apply mask to make sure non-inpaint region is not changed
             rgbs = image * (1 - mask_generate_blur) + rgbs * mask_generate_blur
@@ -322,6 +337,7 @@ class GUI:
 
             # project-texture mask
             proj_mask = (out['alpha'] > 0) & (out['viewcos'] > 0.5)  # [H, W, 1]
+            # kiui.vis.plot_image(out['viewcos'].squeeze(-1).detach().cpu().numpy())
             proj_mask = _zoom(proj_mask.view(1, 1, H, W).float(), 'nearest').view(-1).bool()
             uvs = _zoom(out['uvs'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest')
 
@@ -344,6 +360,7 @@ class GUI:
             cur_albedo = albedo.clone()
             cur_albedo[mask] /= cnt[mask].repeat(1, 3)
             self.renderer.mesh.albedo = cur_albedo
+            # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
 
             # update viewcos cache
             # viewcos = viewcos.view(-1, 1)[proj_mask]

@@ -66,6 +66,13 @@ class Renderer(nn.Module):
 
     @torch.no_grad()
     def load_mesh(self, path, front_dir):
+        if not os.path.exists(path):
+            # try downloading from objaverse (treat path as uid)
+            import objaverse
+            objects = objaverse.load_objects(uids=[path], download_processes=1)
+            path = objects[path]
+            print(f'[INFO] load Objaverse from {path}')
+
         self.mesh = Mesh.load(path, front_dir=front_dir, device=self.device)
 
     @torch.no_grad()

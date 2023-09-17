@@ -23,5 +23,6 @@ test.*
 data2
 data3
 data4
+data_obj
 
 test_inpaint.py

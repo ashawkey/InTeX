@@ -14,12 +14,14 @@ pip install -r requirements.txt
 
 ### Usage
 ```bash
-# local gui
-python main.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True gui=True
-
-# cmd (turn off gui)
-python main.py --gpu 0 --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True
+# run
+python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True
 
 # gradio web gui (only allow obj/glb/gltf)
 python app.py
+```
+
+Automatically download [objaverse](https://objaverse.allenai.org/explore) model by uid:
+```bash
+python main.py --config configs/base.yaml mesh=u3WYrMucGzUOhnNukx2EfyQqevA prompt="a photo of game controller" save_path=controller.obj
 ```
