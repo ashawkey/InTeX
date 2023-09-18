@@ -134,7 +134,7 @@ class GUI:
             hors = [0,  180, 90, -90,     0,    0, 45, -45,  135, -135]
         elif self.opt.camera_path == 'front2':
             vers = [0,  0,    0,   0,  0,   0,  -89.9, 89.9,    0,     0]
-            hors = [0,  180, 45, -45, 90, -90,  0,    0,   135, -135]
+            hors = [0,  45, -45,  180, 90, -90,  0,    0,   135, -135]
         else:
             raise NotImplementedError(f'camera path {self.opt.camera_path} not implemented!')
 
@@ -190,8 +190,8 @@ class GUI:
 
             # dilate and blur mask
             blur_size = 9
-            mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
-            mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
+            # mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
+            mask_generate_blur = gaussian_blur(mask_generate, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
             # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
 
             # weight map for mask_generate
@@ -437,7 +437,7 @@ class GUI:
 
             buffer_image = out[self.mode]  # [H, W, 3]
 
-            if self.mode in ['depth', 'alpha']:
+            if self.mode in ['depth', 'alpha', 'viewcos']:
                 buffer_image = buffer_image.repeat(1, 1, 3)
                 if self.mode == 'depth':
                     buffer_image = (buffer_image - buffer_image.min()) / (buffer_image.max() - buffer_image.min() + 1e-20)
@@ -598,7 +598,7 @@ class GUI:
                     self.need_update = True
 
                 dpg.add_combo(
-                    ("image", "depth", "alpha", "normal", "rot_normal"),
+                    ("image", "depth", "alpha", "normal", "rot_normal", "viewcos"),
                     label="mode",
                     default_value=self.mode,
                     callback=callback_change_mode,

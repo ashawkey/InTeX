@@ -58,18 +58,6 @@ class Mesh:
         else:
             mesh = cls.load_trimesh(path, **kwargs)
 
-        # rotate front dir to +z
-        if front_dir == "-z":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, -1]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "+x":
-            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "-x":
-            mesh.v @= torch.tensor([[0, 0, 1], [0, 1, 0], [-1, 0, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "+y":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, 1, 0]], device=mesh.device, dtype=torch.float32).T
-        elif front_dir == "-y":
-            mesh.v @= torch.tensor([[1, 0, 0], [0, 0, 1], [0, -1, 0]], device=mesh.device, dtype=torch.float32).T
-
         print(f"[Mesh loading] v: {mesh.v.shape}, f: {mesh.f.shape}")
         # auto-normalize
         if resize:
@@ -82,6 +70,31 @@ class Mesh:
         if retex or (mesh.albedo is not None and mesh.vt is None):
             mesh.auto_uv(cache_path=path)
             print(f"[Mesh loading] vt: {mesh.vt.shape}, ft: {mesh.ft.shape}")
+
+        # rotate front dir to +z
+        if front_dir != "+z":
+            # axis switch
+            if "-z" in front_dir:
+                T = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, -1]], device=mesh.device, dtype=torch.float32)
+            elif "+x" in front_dir:
+                T = torch.tensor([[0, 0, 1], [0, 1, 0], [1, 0, 0]], device=mesh.device, dtype=torch.float32)
+            elif "-x" in front_dir:
+                T = torch.tensor([[0, 0, -1], [0, 1, 0], [1, 0, 0]], device=mesh.device, dtype=torch.float32)
+            elif "+y" in front_dir:
+                T = torch.tensor([[1, 0, 0], [0, 0, 1], [0, 1, 0]], device=mesh.device, dtype=torch.float32)
+            elif "-y" in front_dir:
+                T = torch.tensor([[1, 0, 0], [0, 0, -1], [0, 1, 0]], device=mesh.device, dtype=torch.float32)
+            else:
+                T = torch.tensor([[1, 0, 0], [0, 1, 0], [0, 0, 1]], device=mesh.device, dtype=torch.float32)
+            # rotation (how many 90 degrees)
+            if '1' in front_dir:
+                T @= torch.tensor([[0, -1, 0], [1, 0, 0], [0, 0, 1]], device=mesh.device, dtype=torch.float32) 
+            elif '2' in front_dir:
+                T @= torch.tensor([[1, 0, 0], [0, -1, 0], [0, 0, 1]], device=mesh.device, dtype=torch.float32) 
+            elif '3' in front_dir:
+                T @= torch.tensor([[0, 1, 0], [-1, 0, 0], [0, 0, 1]], device=mesh.device, dtype=torch.float32) 
+            mesh.v @= T
+            mesh.vn @= T
 
         return mesh
 
