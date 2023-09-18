@@ -243,7 +243,22 @@ class Mesh:
         mesh.device = device
 
         # use trimesh to load ply/glb, assume only has one single RootMesh...
-        _mesh = trimesh.load(path, force='mesh')
+
+        # force mesh: may fail if it contains Path...
+        # _mesh = trimesh.load(path, force='mesh')
+        _data = trimesh.load(path)
+        if isinstance(_data, trimesh.Scene):
+            if len(_data.geometry) == 1:
+                _mesh = list(_data.geometry.values())[0]
+            else:
+                # manual concat, will lose texture
+                _concat = []
+                for g in _data.geometry.values():
+                    if isinstance(g, trimesh.Trimesh):
+                        _concat.append(g)
+                _mesh = trimesh.util.concatenate(_concat)
+        else:
+            _mesh = _data
         
         if _mesh.visual.kind == 'vertex':
             vertex_colors = _mesh.visual.vertex_colors

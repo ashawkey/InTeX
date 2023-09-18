@@ -441,6 +441,9 @@ class GUI:
                 buffer_image = buffer_image.repeat(1, 1, 3)
                 if self.mode == 'depth':
                     buffer_image = (buffer_image - buffer_image.min()) / (buffer_image.max() - buffer_image.min() + 1e-20)
+            
+            if self.mode in ['normal', 'rot_normal']:
+                buffer_image = (buffer_image + 1) / 2
 
             self.buffer_image = buffer_image.contiguous().clamp(0, 1).detach().cpu().numpy()
 
@@ -595,7 +598,7 @@ class GUI:
                     self.need_update = True
 
                 dpg.add_combo(
-                    ("image", "depth", "alpha", "normal"),
+                    ("image", "depth", "alpha", "normal", "rot_normal"),
                     label="mode",
                     default_value=self.mode,
                     callback=callback_change_mode,
