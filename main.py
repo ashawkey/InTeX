@@ -190,8 +190,8 @@ class GUI:
 
             # dilate and blur mask
             blur_size = 9
-            # mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
-            mask_generate_blur = gaussian_blur(mask_generate, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
+            mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
+            mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
             # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
 
             # weight map for mask_generate
