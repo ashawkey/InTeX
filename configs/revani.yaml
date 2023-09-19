@@ -6,10 +6,10 @@ front_dir: "+z"
 # model_key: xyn-ai/anything-v4.0
 model_key: philz1337/revanimated
 posi_prompt: "masterpiece, high quality"
-nega_prompt: "bad quality, worst quality, shadows"
+nega_prompt: "bad quality, worst quality, shadows, white"
 control_mode: ['depth_inpaint']
 text_dir: true
-camera_path: front
+camera_path: front2
 bg_image: None # assets/brick_wall.png
 texture_size: 1024
 render_resolution: 1024

@@ -133,8 +133,8 @@ class GUI:
             vers = [0,  0,    0,   0, -89.9, 89.9,  0,   0,  0,      0]
             hors = [0,  180, 90, -90,     0,    0, 45, -45,  135, -135]
         elif self.opt.camera_path == 'front2':
-            vers = [0,  0,    0,   0,  0,   0,  -89.9, 89.9,    0,     0]
-            hors = [0,  45, -45,  180, 90, -90,  0,    0,   135, -135]
+            vers = [0, -45, 45, -89.9, 89.9] + [-45, 45, 0] + [0, 0]
+            hors = [0] * 5 + [180] * 3 + [90, -90]
         else:
             raise NotImplementedError(f'camera path {self.opt.camera_path} not implemented!')
 
