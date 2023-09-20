@@ -2,6 +2,8 @@
 
 Tetere is a TExt-to-TExtuRE tool.
 
+https://github.com/ashawkey/tetere_private/assets/25863658/5774f660-1839-488b-9967-40996490aad4
+
 ### Features
 * Text-to-Texture in one minute.
 * Support ControlNet v1.1 inpaint, ip2p, depth, and normal control to generate consistent texture.
