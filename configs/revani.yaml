@@ -1,27 +1,56 @@
+### input
 mesh: ???
 prompt: ???
+### mesh's front-facing direction, check mesh.py for details
 front_dir: "+z"
 
+### output
+outdir: logs
+save_path: out.obj
+
+### SD 1.5 checkpoint
 # model_key: runwayml/stable-diffusion-v1-5
 # model_key: xyn-ai/anything-v4.0
 model_key: philz1337/revanimated
+
+### additional positive/negative prompt
 posi_prompt: "masterpiece, high quality"
 nega_prompt: "bad quality, worst quality, shadows"
+
+### controlnet model
 control_mode: ['depth_inpaint']
+
+### whether append 'front/side/back/top/bottom view' for the prompt, only use if the mesh's front dir is correctly set.
 text_dir: true
-camera_path: front2
+
+### camera path to generate the texture
+camera_path: side
+
+### background image, default to white.
 bg_image: None # assets/brick_wall.png
+
+### generated texture image resolution
 texture_size: 1024
+
+### camera rendering resolution (choose from [512, 1024, 2048, 4096], larger than 512 will incur Real-ESRGAN super-resolution)
 render_resolution: 1024
 
+### open a gui for visualization (need a screen)
 gui: false
+
+### visualize intermediate results (support x11 forwarding)
 vis: false
+
+### interactively visualize and choose intermediate results (need a screen)
 interactive: false
+
+### recalculate uv coordinate for mesh
 retex: false
+
+### gui resolution
 H: 800
 W: 800
+
+### camera setting
 radius: 2.5
 fovy: 50
-
-outdir: logs
-save_path: out.obj

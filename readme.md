@@ -14,9 +14,32 @@ pip install -r requirements.txt
 
 ### Usage
 ```bash
-# run
-python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True
+### generate texture for a mesh based on a prompt (command line), output will be saved to ./logs
+# please check ./configs/revani.yaml for each parameter's meaning
+python main.py --config configs/revani.yaml mesh=data/dragon.obj prompt="a red pet dragon with fire patterns" save_path=dragon_fire.obj text_dir=True 
 
+### visualize generated mesh
+python -m kiui.render ./logs/dragon_fire.obj
+```
+
+Please check `./scripts` for more examples.
+
+Tips:
+* support loading `obj, ply, glb` formated meshes.
+* output will be in `obj` format with seperately saved texture images.
+
+
+### Others
+
+```bash
+### Automatically download [objaverse](https://objaverse.allenai.org/explore) model by uid:
+# auto download the model, and run tex gen.
+python main.py --config configs/base.yaml mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt="a photo of game controller" save_path=controller.obj
+
+# just visualize the downloaded model with original texture
+python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
+
+### interactive tools
 # visualize intermediate results
 python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True vis=True
 
@@ -25,13 +48,4 @@ python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a phot
 
 # [experimental] gradio web gui (only allow obj/glb/gltf)
 python app.py
-```
-
-Automatically download [objaverse](https://objaverse.allenai.org/explore) model by uid:
-```bash
-# auto download the model, and run tex gen.
-python main.py --config configs/base.yaml mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt="a photo of game controller" save_path=controller.obj
-
-# just visualize the downloaded model with original texture
-python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
 ```
