@@ -92,7 +92,7 @@ class GUI:
             self.guidance_embeds = {}
             posi = self.guidance.get_text_embeds([self.prompt])
             self.guidance_embeds['default'] = torch.cat([nega, posi], dim=0)
-            for d in ['front', 'side', 'back', 'overhead', 'bottom']:
+            for d in ['front', 'side', 'back', 'top', 'bottom']:
                 posi = self.guidance.get_text_embeds([self.prompt + f', {d} view'])
                 self.guidance_embeds[d] = torch.cat([nega, posi], dim=0)
 
@@ -128,13 +128,12 @@ class GUI:
         if self.opt.camera_path == 'front':
             vers = [0] * 8 + [-89.9, 89.9]
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
+        elif self.opt.camera_path == 'top':
+            vers = [0, -45, 45, -89.9, 89.9] + [0] + [0] * 6
+            hors = [0] * 5 + [180] + [45, -45, 90, -90, 135, -135]
         elif self.opt.camera_path == 'side':
-            # front --> back --> size --> top/bottom
-            vers = [0,  0,    0,   0, -89.9, 89.9,  0,   0,  0,      0]
-            hors = [0,  180, 90, -90,     0,    0, 45, -45,  135, -135]
-        elif self.opt.camera_path == 'front2':
-            vers = [0, -45, 45, -89.9, 89.9] + [-45, 45, 0] + [0, 0]
-            hors = [0] * 5 + [180] * 3 + [90, -90]
+            vers = [0, 0, 0, 0, 0] + [-45, 45, -89.9, 89.9] + [-45, 0]
+            hors = [0, 45, -45, 90, -90] + [0, 0, 0, 0] + [180, 180]
         else:
             raise NotImplementedError(f'camera path {self.opt.camera_path} not implemented!')
 
@@ -263,8 +262,8 @@ class GUI:
             if not self.opt.text_dir:
                 text_embeds = self.guidance_embeds
             else:
-                if ver < -60: d = 'overhead'
-                elif ver > 60: d = 'bottom'
+                if ver <= -60: d = 'top'
+                elif ver >= 60: d = 'bottom'
                 else:
                     if abs(hor) < 30: d = 'front'
                     elif abs(hor) < 90: d = 'side'
