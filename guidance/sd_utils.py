@@ -137,7 +137,6 @@ class StableDiffusion(nn.Module):
         for k in control_images:
             control_images[k] = control_images[k].to(self.dtype)
 
-
         if latents is None:
             latents = torch.randn((text_embeddings.shape[0] // 2, 4, height // 8, width // 8,), dtype=self.dtype, device=self.device)
         
@@ -153,11 +152,16 @@ class StableDiffusion(nn.Module):
         for i, t in enumerate(self.scheduler.timesteps[init_step:]):
             # inpaint mask blend
             if 'latents_mask' in control_images:
-                mask = control_images['latents_mask']
+                if i < num_inference_steps * 0.6:
+                    # fix keep + refine at early steps
+                    mask_keep = 1 - control_images['latents_mask']
+                else:
+                    # only fix keep at later steps
+                    mask_keep = control_images['latents_mask_keep']
+
                 latents_original = control_images['latents_original']
-                noise = torch.randn_like(latents_original)
-                latents_original_noisy = self.scheduler.add_noise(latents_original, noise, t)
-                latents = latents * mask + latents_original_noisy * (1 - mask)
+                latents_original_noisy = self.scheduler.add_noise(latents_original, torch.randn_like(latents_original), t)
+                latents = latents * (1 - mask_keep) + latents_original_noisy * mask_keep
 
             # expand the latents if we are doing classifier-free guidance to avoid doing two forward passes.
             latent_model_input = torch.cat([latents] * 2)

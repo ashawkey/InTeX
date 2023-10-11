@@ -112,7 +112,7 @@ class GUI:
 
         albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
-        # viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
+        viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
         # keep original texture if using ip2p
         if 'ip2p' in self.opt.control_mode:
@@ -120,12 +120,15 @@ class GUI:
         # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
         self.renderer.mesh.albedo = albedo
         self.renderer.mesh.cnt = cnt 
-        # self.renderer.mesh.viewcos_cache = viewcos_cache
+        self.renderer.mesh.viewcos_cache = viewcos_cache
 
         # vers = [0,]
         # hors = [0,]
 
-        if self.opt.camera_path == 'front':
+        if self.opt.camera_path == 'default':
+            vers = [-30] * 8 + [-89.9, 89.9]
+            hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
+        elif self.opt.camera_path == 'front':
             vers = [0] * 8 + [-89.9, 89.9]
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         elif self.opt.camera_path == 'top':
@@ -142,8 +145,6 @@ class GUI:
         # hors = [0, 180,   0, 45, -45,     0, 90, -90,    0, 135, -135]
 
         start_t = time.time()
-
-        first_iter = True
 
         for ver, hor in zip(vers, hors):
             # render image
@@ -176,22 +177,25 @@ class GUI:
 
             image = _zoom(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
 
-            # trimap: generate
+            # trimap: generate, refine, keep
             mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), mode='nearest') < 0.1 # [1, 1, H, W]
+
+            viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+            mask_refine = ((viewcos_old < viewcos) & ~mask_generate)
+
+            mask_keep = (~mask_generate & ~mask_refine)
+
             mask_generate = mask_generate.float()
-
-            # trimap: refine (contains generate, opposite of keep)
-            # viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            # viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            # mask_refine = (viewcos_old < viewcos).float()
-
-            # mask_generate = ((mask_generate + mask_refine) > 0).float()
+            mask_refine = mask_refine.float()
+            mask_keep = mask_keep.float()
 
             # dilate and blur mask
-            blur_size = 9
-            mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
-            mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
+            # blur_size = 9
+            # mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
+            # mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
             # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
+            mask_generate_blur = mask_generate
 
             # weight map for mask_generate
             # mask_weight = (mask_generate > 0.5).float().cpu().numpy().squeeze(0).squeeze(0)
@@ -199,8 +203,7 @@ class GUI:
             # mask_weight = (mask_weight - mask_weight.min()) / (mask_weight.max() - mask_weight.min() + 1e-20)
             # mask_weight = torch.from_numpy(mask_weight).to(self.device).unsqueeze(0).unsqueeze(0)
 
-
-            # kiui.vis.plot_matrix(viewcos_old, viewcos, mask_refine)
+            # kiui.vis.plot_matrix(mask_generate, mask_refine, mask_keep)
 
             if not (mask_generate > 0.5).any():
                 continue
@@ -248,14 +251,21 @@ class GUI:
             if 'depth_inpaint' in self.opt.control_mode:
 
                 image_generate = image.clone()
-                image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+
+                # image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+                image_generate[mask_keep.repeat(1, 3, 1, 1) < 0.5] = -1 # -1 is inpaint region
+
                 image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
                 depth = _zoom(out['depth'].view(1, 1, H, W), size=(512, 512)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
                 control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
 
                 # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
                 latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask_refine = F.interpolate(mask_refine, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+                latents_mask_keep = F.interpolate(mask_keep, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
                 control_images['latents_mask'] = latents_mask
+                control_images['latents_mask_refine'] = latents_mask_refine
+                control_images['latents_mask_keep'] = latents_mask_keep
                 control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
             
             
@@ -314,7 +324,7 @@ class GUI:
                     rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
             
             # apply mask to make sure non-inpaint region is not changed
-            rgbs = image * (1 - mask_generate_blur) + rgbs * mask_generate_blur
+            rgbs = rgbs * (1 - mask_keep) + image * mask_keep
 
             if self.opt.vis:
                 if 'depth' in control_images:
@@ -348,23 +358,29 @@ class GUI:
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             # cur_albedo, cur_cnt = linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, return_count=True)
             
-            # albedo += cur_albedo
-            # cnt += cur_cnt
-            mask = cnt.squeeze(-1) < 0.1
-            albedo[mask] += cur_albedo[mask]
-            cnt[mask] += cur_cnt[mask]
+            albedo += cur_albedo
+            cnt += cur_cnt
+
+            # mask = cnt.squeeze(-1) < 0.1
+            # albedo[mask] += cur_albedo[mask]
+            # cnt[mask] += cur_cnt[mask]
+
+            # mask = cur_cnt.squeeze(-1) > 0
+            # albedo[mask] = cur_albedo[mask]
+            # cnt[mask] = cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0
             cur_albedo = albedo.clone()
             cur_albedo[mask] /= cnt[mask].repeat(1, 3)
             self.renderer.mesh.albedo = cur_albedo
-            # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
+
+            kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
 
             # update viewcos cache
-            # viewcos = viewcos.view(-1, 1)[proj_mask]
-            # cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
-            # self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
+            viewcos = viewcos.view(-1, 1)[proj_mask]
+            cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
+            self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
 
             first_iter = False
 
