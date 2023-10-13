@@ -24,16 +24,16 @@ control_mode: ['depth_inpaint']
 text_dir: true
 
 ### camera path to generate the texture
-camera_path: side
+camera_path: front
 
 ### background image, default to white.
 bg_image: None # assets/brick_wall.png
 
 ### generated texture image resolution
-texture_size: 1024
+texture_size: 2048
 
 ### camera rendering resolution (choose from [512, 1024, 2048, 4096], larger than 512 will incur Real-ESRGAN super-resolution)
-render_resolution: 1024
+render_resolution: 512
 
 ### open a gui for visualization (need a screen)
 gui: false

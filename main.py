@@ -358,16 +358,16 @@ class GUI:
             cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
             # cur_albedo, cur_cnt = linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, return_count=True)
             
-            albedo += cur_albedo
-            cnt += cur_cnt
+            # albedo += cur_albedo
+            # cnt += cur_cnt
 
             # mask = cnt.squeeze(-1) < 0.1
             # albedo[mask] += cur_albedo[mask]
             # cnt[mask] += cur_cnt[mask]
 
-            # mask = cur_cnt.squeeze(-1) > 0
-            # albedo[mask] = cur_albedo[mask]
-            # cnt[mask] = cur_cnt[mask]
+            mask = cur_cnt.squeeze(-1) > 0
+            albedo[mask] = cur_albedo[mask]
+            cnt[mask] = cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0
@@ -375,7 +375,7 @@ class GUI:
             cur_albedo[mask] /= cnt[mask].repeat(1, 3)
             self.renderer.mesh.albedo = cur_albedo
 
-            kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
+            # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
 
             # update viewcos cache
             viewcos = viewcos.view(-1, 1)[proj_mask]
