@@ -366,8 +366,8 @@ class GUI:
             # cnt[mask] += cur_cnt[mask]
 
             mask = cur_cnt.squeeze(-1) > 0
-            albedo[mask] = cur_albedo[mask]
-            cnt[mask] = cur_cnt[mask]
+            albedo[mask] += cur_albedo[mask]
+            cnt[mask] += cur_cnt[mask]
 
             # update mesh texture for rendering
             mask = cnt.squeeze(-1) > 0

@@ -1,6 +1,7 @@
 tqdm
 rich
 omegaconf
+ninja
 
 numpy
 scipy

@@ -33,7 +33,7 @@ bg_image: None # assets/brick_wall.png
 texture_size: 2048
 
 ### camera rendering resolution (choose from [512, 1024, 2048, 4096], larger than 512 will incur Real-ESRGAN super-resolution)
-render_resolution: 512
+render_resolution: 1024
 
 ### open a gui for visualization (need a screen)
 gui: false

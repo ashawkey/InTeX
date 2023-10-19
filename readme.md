@@ -12,6 +12,9 @@ https://github.com/ashawkey/tetere_private/assets/25863658/5774f660-1839-488b-99
 ### Install
 ```bash
 pip install -r requirements.txt
+
+# nvdiffrast
+pip install git+https://github.com/NVlabs/nvdiffrast/
 ```
 
 ### Usage
