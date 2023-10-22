@@ -24,7 +24,7 @@ control_mode: ['depth_inpaint']
 text_dir: false
 
 ### camera path to generate the texture
-camera_path: front
+camera_path: default
 
 ### background image, default to white.
 bg_image: None # assets/brick_wall.png
@@ -40,9 +40,6 @@ gui: false
 
 ### visualize intermediate results (support x11 forwarding)
 vis: false
-
-### interactively visualize and choose intermediate results (need a screen)
-interactive: false
 
 ### recalculate uv coordinate for mesh
 retex: false

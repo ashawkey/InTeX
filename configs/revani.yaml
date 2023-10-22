@@ -41,9 +41,6 @@ gui: false
 ### visualize intermediate results (support x11 forwarding)
 vis: false
 
-### interactively visualize and choose intermediate results (need a screen)
-interactive: false
-
 ### recalculate uv coordinate for mesh
 retex: false
 

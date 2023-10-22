@@ -8,5 +8,6 @@ python main.py --config configs/base.yaml mesh=data2/teapot.obj prompt="a chines
 
 python main.py --config configs/base.yaml mesh=data/compass.obj prompt="a compass" save_path=compass.obj text_dir=True front_dir=+y2
 python main.py --config configs/revani.yaml mesh=data/ambulance.obj prompt="an ambulance" save_path=ambulance.obj text_dir=True front_dir=-x
+python main.py --config configs/revani.yaml mesh=data3/bimba.obj prompt="a young girl" save_path=bimba.obj text_dir=True front_dir=+x
 
 python main.py --config configs/base.yaml mesh=../gg3d/logs/csm_luigi.obj prompt="luigi" save_path=luigi.obj text_dir=True

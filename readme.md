@@ -48,9 +48,6 @@ python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
 # visualize intermediate results
 python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True vis=True
 
-# interactive inpaint (using cv2 GUI, press space=accept, other=reject)
-python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True interactive=True
-
 # [experimental] gradio web gui (only allow obj/glb/gltf)
 python app.py
 ```

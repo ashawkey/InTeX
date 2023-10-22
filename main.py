@@ -9,7 +9,7 @@ import torch
 import torch.nn.functional as F
 from torchvision.transforms.functional import gaussian_blur
 
-from cam_utils import orbit_camera, OrbitCamera
+from cam_utils import orbit_camera, undo_orbit_camera, OrbitCamera
 from mesh_renderer import Renderer
 
 from scipy import ndimage
@@ -98,11 +98,220 @@ class GUI:
 
         
         print(f'[INFO] loaded guidance model!')
+    
+    @torch.no_grad()
+    def inpaint_view(self, pose):
+
+        h = w = int(self.opt.texture_size)
+        H = W = int(self.opt.render_resolution)
+
+        out = self.renderer.render(pose, self.cam.perspective, H, W)
+
+        # valid crop region with fixed aspect ratio
+        valid_pixels = out['alpha'].squeeze(-1).nonzero() # [N, 2]
+        min_h, max_h = valid_pixels[:, 0].min().item(), valid_pixels[:, 0].max().item()
+        min_w, max_w = valid_pixels[:, 1].min().item(), valid_pixels[:, 1].max().item()
+        
+        size = max(max_h - min_h + 1, max_w - min_w + 1) * 1.1
+        h_start = min(min_h, max_h) - (size - (max_h - min_h + 1)) / 2
+        w_start = min(min_w, max_w) - (size - (max_w - min_w + 1)) / 2
+
+        min_h = int(h_start)
+        min_w = int(w_start)
+        max_h = int(min_h + size)
+        max_w = int(min_w + size)
+
+        # crop region is outside rendered image: do not crop at all.
+        if min_h < 0 or min_w < 0 or max_h > H or max_w > W:
+            min_h = 0
+            min_w = 0
+            max_h = H
+            max_w = W
+
+        def _zoom(x, mode='bilinear', size=(H, W)):
+            return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], size, mode=mode)
+
+        image = _zoom(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
+
+        # trimap: generate, refine, keep
+        mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), mode='nearest') < 0.1 # [1, 1, H, W]
+
+        viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+        viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
+        mask_refine = ((viewcos_old < viewcos) & ~mask_generate)
+
+        mask_keep = (~mask_generate & ~mask_refine)
+
+        mask_generate = mask_generate.float()
+        mask_refine = mask_refine.float()
+        mask_keep = mask_keep.float()
+
+        # dilate and blur mask
+        # blur_size = 9
+        # mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
+        # mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
+        # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
+        mask_generate_blur = mask_generate
+
+        # weight map for mask_generate
+        # mask_weight = (mask_generate > 0.5).float().cpu().numpy().squeeze(0).squeeze(0)
+        # mask_weight = ndimage.distance_transform_edt(mask_weight)#.clip(0, 30) # max pixel dist hardcoded...
+        # mask_weight = (mask_weight - mask_weight.min()) / (mask_weight.max() - mask_weight.min() + 1e-20)
+        # mask_weight = torch.from_numpy(mask_weight).to(self.device).unsqueeze(0).unsqueeze(0)
+
+        # kiui.vis.plot_matrix(mask_generate, mask_refine, mask_keep)
+
+        if not (mask_generate > 0.5).any():
+            return
+
+        control_images = {}
+
+        # construct normal control
+        if 'normal' in self.opt.control_mode:
+            rot_normal = out['rot_normal'] # [H, W, 3]
+            rot_normal[..., 0] *= -1 # align with normalbae: blue = front, red = left, green = top
+            control_images['normal'] = _zoom(rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5, size=(512, 512)) # [1, 3, H, W]
+        
+        # construct depth control
+        if 'depth' in self.opt.control_mode:
+            depth = out['depth']
+            control_images['depth'] = _zoom(depth.view(1, 1, H, W), size=(512, 512)).repeat(1, 3, 1, 1) # [1, 3, H, W]
+        
+        # construct ip2p control
+        if 'ip2p' in self.opt.control_mode:
+            ori_image = _zoom(out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous(), size=(512, 512)) # [1, 3, H, W]
+            control_images['ip2p'] = ori_image
+
+        # construct inpaint control
+        if 'inpaint' in self.opt.control_mode:
+            image_generate = image.clone()
+            image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+            image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
+            control_images['inpaint'] = image_generate
+
+            # image_refine = image.clone()
+            # image_refine[mask_refine.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+            # control_images['inpaint_refine'] = image_refine
+
+            # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+            latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            control_images['latents_mask'] = latents_mask
+            # control_images['mask'] = mask_generate
+            # latents_mask_weight = F.interpolate(mask_weight, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            # control_images['latents_mask_weight'] = (latents_mask_weight > 0.8).float()
+
+            # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
+            control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
+        
+        # construct depth-aware-inpaint control
+        if 'depth_inpaint' in self.opt.control_mode:
+
+            image_generate = image.clone()
+
+            # image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
+            image_generate[mask_keep.repeat(1, 3, 1, 1) < 0.5] = -1 # -1 is inpaint region
+
+            image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
+            depth = _zoom(out['depth'].view(1, 1, H, W), size=(512, 512)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
+            control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
+
+            # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
+            latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            latents_mask_refine = F.interpolate(mask_refine, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            latents_mask_keep = F.interpolate(mask_keep, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            control_images['latents_mask'] = latents_mask
+            control_images['latents_mask_refine'] = latents_mask_refine
+            control_images['latents_mask_keep'] = latents_mask_keep
+            control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
+        
+        
+        if not self.opt.text_dir:
+            text_embeds = self.guidance_embeds
+        else:
+            # pose to view dir
+            ver, hor, _ = undo_orbit_camera(pose)
+            if ver <= -60: d = 'top'
+            elif ver >= 60: d = 'bottom'
+            else:
+                if abs(hor) < 30: d = 'front'
+                elif abs(hor) < 90: d = 'side'
+                else: d = 'back'
+            text_embeds = self.guidance_embeds[d]
+
+        # prompt to reject & regenerate
+        rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
+
+        # performing upscaling (assume 2/4/8x)
+        if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
+            scale = W // rgbs.shape[-1]
+            rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
+            rgbs = (rgbs * 255).astype(np.uint8)
+            rgbs = kiui.sr.sr(rgbs, scale=scale)
+            rgbs = rgbs.astype(np.float32) / 255
+            rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
+        
+        # apply mask to make sure non-inpaint region is not changed
+        rgbs = rgbs * (1 - mask_keep) + image * mask_keep
+
+        if self.opt.vis:
+            if 'depth' in control_images:
+                kiui.vis.plot_image(control_images['depth'])
+            if 'normal' in control_images:
+                kiui.vis.plot_image(control_images['normal'])
+            if 'ip2p' in control_images:
+                kiui.vis.plot_image(ori_image)
+            # kiui.vis.plot_image(mask_generate)
+            if 'inpaint' in control_images:
+                kiui.vis.plot_image(control_images['inpaint'].clamp(0, 1))
+                # kiui.vis.plot_image(control_images['inpaint_refine'].clamp(0, 1))
+            if 'depth_inpaint' in control_images:
+                kiui.vis.plot_image(control_images['depth_inpaint'][:, :3].clamp(0, 1))
+                kiui.vis.plot_image(control_images['depth_inpaint'][:, 3:].clamp(0, 1))
+            kiui.vis.plot_image(rgbs)
+
+        # grid put
+
+        # project-texture mask
+        proj_mask = (out['alpha'] > 0) & (out['viewcos'] > 0.5)  # [H, W, 1]
+        # kiui.vis.plot_image(out['viewcos'].squeeze(-1).detach().cpu().numpy())
+        proj_mask = _zoom(proj_mask.view(1, 1, H, W).float(), 'nearest').view(-1).bool()
+        uvs = _zoom(out['uvs'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest')
+
+        uvs = uvs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 2)[proj_mask]
+        rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 3)[proj_mask]
+        
+        # print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
+
+        cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
+        # cur_albedo, cur_cnt = linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, return_count=True)
+        
+        # albedo += cur_albedo
+        # cnt += cur_cnt
+
+        # mask = cnt.squeeze(-1) < 0.1
+        # albedo[mask] += cur_albedo[mask]
+        # cnt[mask] += cur_cnt[mask]
+
+        mask = cur_cnt.squeeze(-1) > 0
+        self.albedo[mask] += cur_albedo[mask]
+        self.cnt[mask] += cur_cnt[mask]
+
+        # update mesh texture for rendering
+        mask = self.cnt.squeeze(-1) > 0
+        cur_albedo = self.albedo.clone()
+        cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
+        self.renderer.mesh.albedo = cur_albedo
+
+        # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
+
+        # update viewcos cache
+        viewcos = viewcos.view(-1, 1)[proj_mask]
+        cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
+        self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
+
 
     @torch.no_grad()
-    def generate(self):
-
-        print(f'[INFO] start generation...')
+    def initialize(self):
 
         if self.guidance is None:
             self.prepare_guidance()
@@ -110,23 +319,31 @@ class GUI:
         h = w = int(self.opt.texture_size)
         H = W = int(self.opt.render_resolution)
 
-        albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
-        cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
-        viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
+        self.albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
+        self.cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
+        self.viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
 
         # keep original texture if using ip2p
         if 'ip2p' in self.opt.control_mode:
             self.renderer.mesh.ori_albedo = self.renderer.mesh.albedo.clone()
         # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
-        self.renderer.mesh.albedo = albedo
-        self.renderer.mesh.cnt = cnt 
-        self.renderer.mesh.viewcos_cache = viewcos_cache
+        self.renderer.mesh.albedo = self.albedo
+        self.renderer.mesh.cnt = self.cnt 
+        self.renderer.mesh.viewcos_cache = self.viewcos_cache
+
+     
+    @torch.no_grad()
+    def generate(self):
+
+        print(f'[INFO] start generation...')
+
+        self.initialize()
 
         # vers = [0,]
         # hors = [0,]
 
         if self.opt.camera_path == 'default':
-            vers = [-30] * 8 + [-89.9, 89.9]
+            vers = [-15] * 8 + [-89.9, 89.9]
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
         elif self.opt.camera_path == 'front':
             vers = [0] * 8 + [-89.9, 89.9]
@@ -149,247 +366,14 @@ class GUI:
         for ver, hor in zip(vers, hors):
             # render image
             pose = orbit_camera(ver, hor, self.cam.radius)
-            out = self.renderer.render(pose, self.cam.perspective, H, W)
+            self.inpaint_view(pose)
 
-            # valid crop region with fixed aspect ratio
-            valid_pixels = out['alpha'].squeeze(-1).nonzero() # [N, 2]
-            min_h, max_h = valid_pixels[:, 0].min().item(), valid_pixels[:, 0].max().item()
-            min_w, max_w = valid_pixels[:, 1].min().item(), valid_pixels[:, 1].max().item()
-            
-            size = max(max_h - min_h + 1, max_w - min_w + 1) * 1.1
-            h_start = min(min_h, max_h) - (size - (max_h - min_h + 1)) / 2
-            w_start = min(min_w, max_w) - (size - (max_w - min_w + 1)) / 2
-
-            min_h = int(h_start)
-            min_w = int(w_start)
-            max_h = int(min_h + size)
-            max_w = int(min_w + size)
-
-            # crop region is outside rendered image: do not crop at all.
-            if min_h < 0 or min_w < 0 or max_h > H or max_w > W:
-                min_h = 0
-                min_w = 0
-                max_h = H
-                max_w = W
-
-            def _zoom(x, mode='bilinear', size=(H, W)):
-                return F.interpolate(x[..., min_h:max_h+1, min_w:max_w+1], size, mode=mode)
-
-            image = _zoom(out['image'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 3, H, W]
-
-            # trimap: generate, refine, keep
-            mask_generate = _zoom(out['cnt'].permute(2, 0, 1).unsqueeze(0).contiguous(), mode='nearest') < 0.1 # [1, 1, H, W]
-
-            viewcos_old = _zoom(out['viewcos_cache'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            viewcos = _zoom(out['viewcos'].permute(2, 0, 1).unsqueeze(0).contiguous()) # [1, 1, H, W]
-            mask_refine = ((viewcos_old < viewcos) & ~mask_generate)
-
-            mask_keep = (~mask_generate & ~mask_refine)
-
-            mask_generate = mask_generate.float()
-            mask_refine = mask_refine.float()
-            mask_keep = mask_keep.float()
-
-            # dilate and blur mask
-            # blur_size = 9
-            # mask_generate_blur = dilation(mask_generate, kernel=torch.ones(blur_size, blur_size, device=mask_generate.device))
-            # mask_generate_blur = gaussian_blur(mask_generate_blur, kernel_size=blur_size, sigma=5) # [1, 1, H, W]
-            # mask_generate[mask_generate > 0.5] = 1 # do not mix any inpaint region
-            mask_generate_blur = mask_generate
-
-            # weight map for mask_generate
-            # mask_weight = (mask_generate > 0.5).float().cpu().numpy().squeeze(0).squeeze(0)
-            # mask_weight = ndimage.distance_transform_edt(mask_weight)#.clip(0, 30) # max pixel dist hardcoded...
-            # mask_weight = (mask_weight - mask_weight.min()) / (mask_weight.max() - mask_weight.min() + 1e-20)
-            # mask_weight = torch.from_numpy(mask_weight).to(self.device).unsqueeze(0).unsqueeze(0)
-
-            # kiui.vis.plot_matrix(mask_generate, mask_refine, mask_keep)
-
-            if not (mask_generate > 0.5).any():
-                continue
-
-            control_images = {}
-
-            # construct normal control
-            if 'normal' in self.opt.control_mode:
-                rot_normal = out['rot_normal'] # [H, W, 3]
-                rot_normal[..., 0] *= -1 # align with normalbae: blue = front, red = left, green = top
-                control_images['normal'] = _zoom(rot_normal.permute(2, 0, 1).unsqueeze(0).contiguous() * 0.5 + 0.5, size=(512, 512)) # [1, 3, H, W]
-            
-            # construct depth control
-            if 'depth' in self.opt.control_mode:
-                depth = out['depth']
-                control_images['depth'] = _zoom(depth.view(1, 1, H, W), size=(512, 512)).repeat(1, 3, 1, 1) # [1, 3, H, W]
-            
-            # construct ip2p control
-            if 'ip2p' in self.opt.control_mode:
-                ori_image = _zoom(out['ori_image'].permute(2, 0, 1).unsqueeze(0).contiguous(), size=(512, 512)) # [1, 3, H, W]
-                control_images['ip2p'] = ori_image
-
-            # construct inpaint control
-            if 'inpaint' in self.opt.control_mode:
-                image_generate = image.clone()
-                image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-                image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
-                control_images['inpaint'] = image_generate
-
-                # image_refine = image.clone()
-                # image_refine[mask_refine.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-                # control_images['inpaint_refine'] = image_refine
-
-                # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-                control_images['latents_mask'] = latents_mask
-                # control_images['mask'] = mask_generate
-                # latents_mask_weight = F.interpolate(mask_weight, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-                # control_images['latents_mask_weight'] = (latents_mask_weight > 0.8).float()
-
-                # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
-                control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
-            
-            # construct depth-aware-inpaint control
-            if 'depth_inpaint' in self.opt.control_mode:
-
-                image_generate = image.clone()
-
-                # image_generate[mask_generate.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-                image_generate[mask_keep.repeat(1, 3, 1, 1) < 0.5] = -1 # -1 is inpaint region
-
-                image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
-                depth = _zoom(out['depth'].view(1, 1, H, W), size=(512, 512)).clamp(0, 1).repeat(1, 3, 1, 1) # [1, 3, H, W]
-                control_images['depth_inpaint'] = torch.cat([image_generate, depth], dim=1) # [1, 6, H, W]
-
-                # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
-                latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-                latents_mask_refine = F.interpolate(mask_refine, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-                latents_mask_keep = F.interpolate(mask_keep, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-                control_images['latents_mask'] = latents_mask
-                control_images['latents_mask_refine'] = latents_mask_refine
-                control_images['latents_mask_keep'] = latents_mask_keep
-                control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
-            
-            
-            if not self.opt.text_dir:
-                text_embeds = self.guidance_embeds
-            else:
-                if ver <= -60: d = 'top'
-                elif ver >= 60: d = 'bottom'
-                else:
-                    if abs(hor) < 30: d = 'front'
-                    elif abs(hor) < 90: d = 'side'
-                    else: d = 'back'
-                text_embeds = self.guidance_embeds[d]
-
-
-            # prompt to reject & regenerate
-            if self.opt.interactive:
-                cv2.startWindowThread()
-                cv2.namedWindow("Reject?")
-                reject = True
-                while reject:
-                    rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
-
-                    # performing upscaling (assume 2/4/8x)
-                    if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
-                        scale = W // rgbs.shape[-1]
-                        rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
-                        rgbs = (rgbs * 255).astype(np.uint8)
-                        rgbs = kiui.sr.sr(rgbs, scale=scale)
-                        rgbs = rgbs.astype(np.float32) / 255
-                        rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
-
-                    image_compare = torch.cat([image, mask_generate_blur.repeat(1,3,1,1), rgbs], dim=3)
-                    image_compare = image_compare[0].permute(1,2,0).contiguous().detach().cpu().numpy() # [H, W*3, 3]
-                    image_compare = (image_compare * 255).astype(np.uint8)
-                    image_compare = cv2.cvtColor(image_compare, cv2.COLOR_RGB2BGR)
-
-                    kiui.lo(image_compare)
-                    cv2.imshow('Reject?', image_compare)
-                    key = cv2.waitKey(0)
-                    if key == 32: # space, adopt current image
-                        reject = False
-                    else: # else, regenerate until satisfying
-                        reject = True 
-                    cv2.destroyAllWindows()
-            else:
-                rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
-
-                # performing upscaling (assume 2/4/8x)
-                if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
-                    scale = W // rgbs.shape[-1]
-                    rgbs = rgbs.detach().cpu().squeeze(0).permute(1, 2, 0).contiguous().numpy()
-                    rgbs = (rgbs * 255).astype(np.uint8)
-                    rgbs = kiui.sr.sr(rgbs, scale=scale)
-                    rgbs = rgbs.astype(np.float32) / 255
-                    rgbs = torch.from_numpy(rgbs).permute(2, 0, 1).unsqueeze(0).contiguous().to(self.device)
-            
-            # apply mask to make sure non-inpaint region is not changed
-            rgbs = rgbs * (1 - mask_keep) + image * mask_keep
-
-            if self.opt.vis:
-                if 'depth' in control_images:
-                    kiui.vis.plot_image(control_images['depth'])
-                if 'normal' in control_images:
-                    kiui.vis.plot_image(control_images['normal'])
-                if 'ip2p' in control_images:
-                    kiui.vis.plot_image(ori_image)
-                # kiui.vis.plot_image(mask_generate)
-                if 'inpaint' in control_images:
-                    kiui.vis.plot_image(control_images['inpaint'].clamp(0, 1))
-                    # kiui.vis.plot_image(control_images['inpaint_refine'].clamp(0, 1))
-                if 'depth_inpaint' in control_images:
-                    kiui.vis.plot_image(control_images['depth_inpaint'][:, :3].clamp(0, 1))
-                    kiui.vis.plot_image(control_images['depth_inpaint'][:, 3:].clamp(0, 1))
-                kiui.vis.plot_image(rgbs)
-
-            # grid put
-
-            # project-texture mask
-            proj_mask = (out['alpha'] > 0) & (out['viewcos'] > 0.5)  # [H, W, 1]
-            # kiui.vis.plot_image(out['viewcos'].squeeze(-1).detach().cpu().numpy())
-            proj_mask = _zoom(proj_mask.view(1, 1, H, W).float(), 'nearest').view(-1).bool()
-            uvs = _zoom(out['uvs'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest')
-
-            uvs = uvs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 2)[proj_mask]
-            rgbs = rgbs.squeeze(0).permute(1, 2, 0).contiguous().view(-1, 3)[proj_mask]
-            
-            print(f'[INFO] processing {ver} - {hor}, {rgbs.shape}')
-
-            cur_albedo, cur_cnt = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, min_resolution=128, return_count=True)
-            # cur_albedo, cur_cnt = linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, rgbs, return_count=True)
-            
-            # albedo += cur_albedo
-            # cnt += cur_cnt
-
-            # mask = cnt.squeeze(-1) < 0.1
-            # albedo[mask] += cur_albedo[mask]
-            # cnt[mask] += cur_cnt[mask]
-
-            mask = cur_cnt.squeeze(-1) > 0
-            albedo[mask] += cur_albedo[mask]
-            cnt[mask] += cur_cnt[mask]
-
-            # update mesh texture for rendering
-            mask = cnt.squeeze(-1) > 0
-            cur_albedo = albedo.clone()
-            cur_albedo[mask] /= cnt[mask].repeat(1, 3)
-            self.renderer.mesh.albedo = cur_albedo
-
-            # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
-
-            # update viewcos cache
-            viewcos = viewcos.view(-1, 1)[proj_mask]
-            cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
-            self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
-
-            first_iter = False
-
-        mask = cnt.squeeze(-1) > 0
-        albedo[mask] = albedo[mask] / cnt[mask].repeat(1, 3)
+        mask = self.cnt.squeeze(-1) > 0
+        self.albedo[mask] = self.albedo[mask] / self.cnt[mask].repeat(1, 3)
 
         ## dilate texture
         mask = mask.view(h, w)
-        albedo = albedo.detach().cpu().numpy()
+        self.albedo = self.albedo.detach().cpu().numpy()
         mask = mask.detach().cpu().numpy()
 
         from sklearn.neighbors import NearestNeighbors
@@ -408,17 +392,17 @@ class GUI:
         knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
         _, indices = knn.kneighbors(inpaint_coords)
 
-        albedo[tuple(inpaint_coords.T)] = albedo[tuple(search_coords[indices[:, 0]].T)]
+        self.albedo[tuple(inpaint_coords.T)] = self.albedo[tuple(search_coords[indices[:, 0]].T)]
 
         # overall deblur by LR then SR
-        # kiui.vis.plot_image(albedo)
-        albedo = (albedo * 255).astype(np.uint8)
-        albedo = cv2.resize(albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
-        albedo = kiui.sr.sr(albedo, scale=4)
-        albedo = albedo.astype(np.float32) / 255
-        # kiui.vis.plot_image(albedo)
+        # kiui.vis.plot_image(self.albedo)
+        self.albedo = (self.albedo * 255).astype(np.uint8)
+        self.albedo = cv2.resize(self.albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
+        self.albedo = kiui.sr.sr(self.albedo, scale=4)
+        self.albedo = self.albedo.astype(np.float32) / 255
+        # kiui.vis.plot_image(self.albedo)
 
-        albedo = torch.from_numpy(albedo).to(self.device)
+        self.albedo = torch.from_numpy(self.albedo).to(self.device)
 
         # enhance quality by SD refine...
         # kiui.vis.plot_image(albedo.detach().cpu().numpy())
@@ -426,7 +410,7 @@ class GUI:
         # albedo = self.guidance.refine(text_embeds, albedo.permute(2,0,1).unsqueeze(0).contiguous(), strength=0.8).squeeze(0).permute(1,2,0).contiguous()
         # kiui.vis.plot_image(albedo.detach().cpu().numpy())
 
-        self.renderer.mesh.albedo = albedo
+        self.renderer.mesh.albedo = self.albedo
 
         torch.cuda.synchronize()
         end_t = time.time()
@@ -574,8 +558,21 @@ class GUI:
                 with dpg.group(horizontal=True):
                     dpg.add_text("Generate: ")
 
+                    def callback_init(sender, app_data):
+                        self.initialize()
+                        self.need_update = True
+
                     def callback_generate(sender, app_data):
-                        self.generate()
+                        # inpaint current view
+                        self.inpaint_view(self.cam.pose)
+                        self.need_update = True
+
+                    dpg.add_button(
+                        label="init",
+                        tag="_button_init",
+                        callback=callback_init,
+                    )
+                    dpg.bind_item_theme("_button_init", theme_button)
 
                     dpg.add_button(
                         label="gen",
