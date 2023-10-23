@@ -152,7 +152,7 @@ class StableDiffusion(nn.Module):
         for i, t in enumerate(self.scheduler.timesteps[init_step:]):
             # inpaint mask blend
             if 'latents_mask' in control_images:
-                if i < num_inference_steps * 0.8:
+                if i < num_inference_steps * 0.9:
                     # fix keep + refine at early steps
                     mask_keep = 1 - control_images['latents_mask']
                 else:

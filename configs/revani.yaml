@@ -1,6 +1,7 @@
 ### input
 mesh: 
 prompt: 
+seed: "random"
 ### mesh's front-facing direction, check mesh.py for details
 front_dir: "+z"
 

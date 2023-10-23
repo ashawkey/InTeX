@@ -46,4 +46,4 @@ with block:
     
         button_generate.click(process, inputs=[input_prompt, is_text_dir, model], outputs=[output_model, output_image])
     
-block.launch(server_name="0.0.0.0")
+block.launch(server_name="0.0.0.0", share=True)

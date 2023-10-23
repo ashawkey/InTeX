@@ -28,7 +28,7 @@ class GUI:
         self.cam = OrbitCamera(opt.W, opt.H, r=opt.radius, fovy=opt.fovy)
 
         self.mode = "image"
-        self.seed = "random"
+        self.seed = opt.seed
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.need_update = True  # update buffer_image
@@ -391,8 +391,8 @@ class GUI:
         # hors = [0,]
 
         if self.opt.camera_path == 'default':
-            vers = [-15] * 8 + [-89.9, 89.9]
-            hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
+            vers = [-15] * 8 + [-89.9, 89.9] + [45]
+            hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0] + [0]
         elif self.opt.camera_path == 'front':
             vers = [0] * 8 + [-89.9, 89.9]
             hors = [0, 45, -45, 90, -90, 135, -135, 180] + [0, 0]
