@@ -31,7 +31,16 @@ class GUI:
         self.seed = opt.seed
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
+        self.buffer_overlay = np.zeros((self.W, self.H, 3), dtype=np.float32)
+        self.buffer_out = None  # for 2D to 3D projection
+
         self.need_update = True  # update buffer_image
+        self.need_update_overlay = True  # update buffer_overlay
+
+        self.mouse_loc = np.array([0, 0])
+        self.draw_mask = False
+        self.draw_radius = 20
+        self.mask_2d = np.zeros((self.W, self.H, 1), dtype=np.float32)
 
         # models
         self.device = torch.device("cuda")
@@ -430,7 +439,7 @@ class GUI:
     @torch.no_grad()
     def test_step(self):
         # ignore if no need to update
-        if not self.need_update:
+        if not self.need_update and not self.need_update_overlay:
             return
 
         starter = torch.cuda.Event(enable_timing=True)
@@ -455,16 +464,34 @@ class GUI:
 
             self.buffer_image = buffer_image.contiguous().clamp(0, 1).detach().cpu().numpy()
 
+            self.buffer_out = out
+
             self.need_update = False
+        
+        # should update overlay
+        if self.need_update_overlay:
+            buffer_overlay = np.zeros_like(self.buffer_overlay)
+
+            # draw mask 2d
+            buffer_overlay += self.mask_2d * 0.2
+            
+            self.buffer_overlay = buffer_overlay
+            self.need_update_overlay = False
 
         ender.record()
         torch.cuda.synchronize()
         t = starter.elapsed_time(ender)
 
         if self.gui:
+
+            # mix image and overlay
+            buffer = np.clip(
+                self.buffer_image + self.buffer_overlay, 0, 1
+            )  # mix mode, sometimes unclear
+
             dpg.set_value("_log_infer_time", f"{t:.4f}ms ({int(1000/t)} FPS)")
             dpg.set_value(
-                "_texture", self.buffer_image
+                "_texture", buffer
             )  # buffer must be contiguous, else seg fault!
 
 
@@ -660,6 +687,73 @@ class GUI:
                     default_value=np.rad2deg(self.cam.fovy),
                     callback=callback_set_fovy,
                 )
+            
+            # draw mask 
+            with dpg.collapsing_header(label="Draw", default_open=True):
+                with dpg.group(horizontal=True):
+
+                    def callback_toggle_draw_mask(sender, app_data):
+                        self.draw_mask = not self.draw_mask
+                        self.need_update_overlay = True
+                    
+                    def callback_reset_mask(sender, app_data):
+                        self.mask_2d *= 0
+                        self.need_update_overlay = True
+                    
+                    def callback_erase_mask(sender, app_data):
+                        out = self.buffer_out
+                        proj_mask = (out['alpha'] > 0).view(-1).bool()
+                        uvs = out['uvs'].view(-1, 2)[proj_mask]
+                        mask_2d = torch.from_numpy(self.mask_2d).to(self.device).view(-1, 1)[proj_mask]
+                        h = w = int(self.opt.texture_size)
+                        mask_2d = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, mask_2d, min_resolution=128)
+                        
+                        mask = mask_2d.squeeze(-1) > 0
+                        self.albedo[mask] = 0
+                        self.cnt[mask] = 0
+
+                        # update mesh texture for rendering
+                        mask = self.cnt.squeeze(-1) > 0
+                        cur_albedo = self.albedo.clone()
+                        cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
+                        self.renderer.mesh.albedo = cur_albedo
+                        
+                        # reset mask too
+                        self.mask_2d *= 0
+                        self.need_update = True
+                        self.need_update_overlay = True
+
+                    dpg.add_checkbox(
+                        label="draw",
+                        default_value=self.draw_mask,
+                        callback=callback_toggle_draw_mask,
+                    )
+
+                    dpg.add_button(
+                        label="reset",
+                        tag="_button_reset_mask",
+                        callback=callback_reset_mask,
+                    )
+                    dpg.bind_item_theme("_button_reset_mask", theme_button)
+
+                    dpg.add_button(
+                        label="erase",
+                        tag="_button_erase_mask",
+                        callback=callback_erase_mask,
+                    )
+                    dpg.bind_item_theme("_button_erase_mask", theme_button)
+                
+                dpg.add_slider_int(
+                    label="draw radius",
+                    min_value=1,
+                    max_value=100,
+                    format="%d",
+                    default_value=self.draw_radius,
+                    callback=callback_setattr,
+                    user_data="draw_radius",
+                )
+
+
 
         ### register camera handler
 
@@ -670,8 +764,21 @@ class GUI:
             dx = app_data[1]
             dy = app_data[2]
 
-            self.cam.orbit(dx, dy)
-            self.need_update = True
+            if self.draw_mask:
+                self.mask_2d[
+                    int(self.mouse_loc[1])
+                    - self.draw_radius : int(self.mouse_loc[1])
+                    + self.draw_radius,
+                    int(self.mouse_loc[0])
+                    - self.draw_radius : int(self.mouse_loc[0])
+                    + self.draw_radius,
+                ] = 1
+
+            else:
+                self.cam.orbit(dx, dy)
+                self.need_update = True
+
+            self.need_update_overlay = True
 
         def callback_camera_wheel_scale(sender, app_data):
             if not dpg.is_item_focused("_primary_window"):
@@ -709,6 +816,7 @@ class GUI:
             dpg.add_mouse_drag_handler(
                 button=dpg.mvMouseButton_Middle, callback=callback_camera_drag_pan
             )
+            dpg.add_mouse_move_handler(callback=callback_set_mouse_loc)
 
         dpg.create_viewport(
             title="Gaussian3D",
