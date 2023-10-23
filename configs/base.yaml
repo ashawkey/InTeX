@@ -1,6 +1,6 @@
 ### input
-mesh: ???
-prompt: ???
+mesh: 
+prompt: 
 ### mesh's front-facing direction, check mesh.py for details
 front_dir: "+z"
 

@@ -25,6 +25,9 @@ python main.py --config configs/revani.yaml mesh=data/dragon.obj prompt="a red p
 
 ### visualize generated mesh
 python -m kiui.render ./logs/dragon_fire.obj
+
+### web gui (gradio)
+python app.py
 ```
 
 Please check `./scripts` for more examples.
@@ -47,7 +50,4 @@ python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
 ### interactive tools
 # visualize intermediate results
 python main.py --config configs/base.yaml mesh=data2/napoleon.obj prompt="a photo of napoleon" save_path=napoleon.obj text_dir=True vis=True
-
-# [experimental] gradio web gui (only allow obj/glb/gltf)
-python app.py
 ```

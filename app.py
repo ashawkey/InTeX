@@ -1,37 +1,25 @@
 import numpy as np
 import gradio as gr
-import argparse
-
 from main import GUI
+import argparse
+from omegaconf import OmegaConf
 
 parser = argparse.ArgumentParser()
-parser.add_argument("--mesh", type=str, default=None)
-parser.add_argument("--prompt", type=str, default='')
-parser.add_argument("--posi_prompt", type=str, default="high quality")
-parser.add_argument("--nega_prompt", type=str, default="worst quality, low quality")
-parser.add_argument("--control_mode", action='append', default=['normal', 'inpaint'])
-# parser.add_argument("--control_mode", default=None)
-parser.add_argument("--outdir", type=str, default="logs")
-parser.add_argument("--save_path", type=str, default="out")
-# parser.add_argument("--model_key", type=str, default="stablediffusionapi/anything-v5")
-# parser.add_argument("--model_key", type=str, default="xyn-ai/anything-v4.0")
-parser.add_argument("--model_key", type=str, default="runwayml/stable-diffusion-v1-5")
-parser.add_argument("--gui", action='store_true')
-parser.add_argument("--text_dir", action='store_true')
-parser.add_argument("--H", type=int, default=800)
-parser.add_argument("--W", type=int, default=800)
-parser.add_argument("--radius", type=float, default=2)
-parser.add_argument("--fovy", type=float, default=60)
+parser.add_argument("--config", default='configs/revani.yaml', help="path to the yaml config file")
+args, extras = parser.parse_known_args()
 
-opt = parser.parse_args()
+# override default config from cli
+opt = OmegaConf.merge(OmegaConf.load(args.config), OmegaConf.from_cli(extras))
+
+# override some options
+opt.prompt = ''
 opt.gui = False
-opt.text_dir = True
-opt.save_path = 'out.glb' # use glb to correctly show texture in gr.Model3D
+opt.save_path = 'gradio_output.glb' # use glb to correctly show texture in gr.Model3D
 
 core = GUI(opt)
-core.prepare_guidance()
 
-def process(prompt, mesh_path):
+def process(prompt, is_text_dir, mesh_path):
+    opt.text_dir = is_text_dir
     core.prompt = opt.posi_prompt + ', ' + prompt
     core.renderer.load_mesh(mesh_path)
     core.generate()
@@ -48,12 +36,14 @@ with block:
     with gr.Row():
         with gr.Column():
             input_prompt = gr.Textbox(label="prompt")
-            model = gr.Model3D(label="3D model")
+            is_text_dir = gr.Checkbox(label="use directional prompt")
+            model = gr.Model3D(label="input model")
             button_generate = gr.Button("Generate")
         
         with gr.Column():
+            output_model = gr.Model3D(label="output model")
             output_image = gr.Image(label="texture")
     
-        button_generate.click(process, inputs=[input_prompt, model], outputs=[model, output_image])
+        button_generate.click(process, inputs=[input_prompt, is_text_dir, model], outputs=[output_model, output_image])
     
 block.launch(server_name="0.0.0.0")

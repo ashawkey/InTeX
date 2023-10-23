@@ -78,11 +78,13 @@ class GUI:
     
     def prepare_guidance(self):
         
-        print(f'[INFO] loading guidance model...')
+        if self.guidance is None:
+            print(f'[INFO] loading guidance model...')
+            from guidance.sd_utils import StableDiffusion
+            self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key)
+            print(f'[INFO] loaded guidance model!')
 
-        from guidance.sd_utils import StableDiffusion
-        self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key)
-
+        print(f'[INFO] encoding prompt...')
         nega = self.guidance.get_text_embeds([self.negative_prompt])
 
         if not self.opt.text_dir:
@@ -95,9 +97,7 @@ class GUI:
             for d in ['front', 'side', 'back', 'top', 'bottom']:
                 posi = self.guidance.get_text_embeds([self.prompt + f', {d} view'])
                 self.guidance_embeds[d] = torch.cat([nega, posi], dim=0)
-
         
-        print(f'[INFO] loaded guidance model!')
     
     @torch.no_grad()
     def inpaint_view(self, pose):
@@ -309,15 +309,65 @@ class GUI:
         cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
         self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
 
+    @torch.no_grad()
+    def dilate_texture(self):
+        mask = self.cnt.squeeze(-1) > 0
+        self.albedo[mask] = self.albedo[mask] / self.cnt[mask].repeat(1, 3)
+
+        ## dilate texture
+        h = w = int(self.opt.texture_size)
+        mask = mask.view(h, w)
+        self.albedo = self.albedo.detach().cpu().numpy()
+        mask = mask.detach().cpu().numpy()
+
+        from sklearn.neighbors import NearestNeighbors
+        from scipy.ndimage import binary_dilation, binary_erosion
+
+        inpaint_region = binary_dilation(mask, iterations=int(h * 0.2))
+        inpaint_region[mask] = 0
+
+        search_region = mask.copy()
+        not_search_region = binary_erosion(search_region, iterations=3)
+        search_region[not_search_region] = 0
+
+        search_coords = np.stack(np.nonzero(search_region), axis=-1)
+        inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
+
+        knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
+        _, indices = knn.kneighbors(inpaint_coords)
+
+        self.albedo[tuple(inpaint_coords.T)] = self.albedo[tuple(search_coords[indices[:, 0]].T)]
+
+        self.albedo = torch.from_numpy(self.albedo).to(self.device)
+        self.renderer.mesh.albedo = self.albedo
+    
+    @torch.no_grad()
+    def deblur(self):
+        # overall deblur by LR then SR
+        # kiui.vis.plot_image(self.albedo)
+        h = w = int(self.opt.texture_size)
+        self.albedo = self.albedo.detach().cpu().numpy()
+        self.albedo = (self.albedo * 255).astype(np.uint8)
+        self.albedo = cv2.resize(self.albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
+        self.albedo = kiui.sr.sr(self.albedo, scale=4)
+        self.albedo = self.albedo.astype(np.float32) / 255
+        # kiui.vis.plot_image(self.albedo)
+        self.albedo = torch.from_numpy(self.albedo).to(self.device)
+
+        # enhance quality by SD refine...
+        # kiui.vis.plot_image(albedo.detach().cpu().numpy())
+        # text_embeds = self.guidance_embeds if not self.opt.text_dir else self.guidance_embeds['default']
+        # albedo = self.guidance.refine(text_embeds, albedo.permute(2,0,1).unsqueeze(0).contiguous(), strength=0.8).squeeze(0).permute(1,2,0).contiguous()
+        # kiui.vis.plot_image(albedo.detach().cpu().numpy())
+
+        self.renderer.mesh.albedo = self.albedo
 
     @torch.no_grad()
     def initialize(self):
 
-        if self.guidance is None:
-            self.prepare_guidance()
+        self.prepare_guidance()
         
         h = w = int(self.opt.texture_size)
-        H = W = int(self.opt.render_resolution)
 
         self.albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         self.cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
@@ -334,8 +384,6 @@ class GUI:
      
     @torch.no_grad()
     def generate(self):
-
-        print(f'[INFO] start generation...')
 
         self.initialize()
 
@@ -363,54 +411,15 @@ class GUI:
 
         start_t = time.time()
 
-        for ver, hor in zip(vers, hors):
+        print(f'[INFO] start generation...')
+        for ver, hor in tqdm.tqdm(zip(vers, hors), total=len(vers)):
             # render image
             pose = orbit_camera(ver, hor, self.cam.radius)
             self.inpaint_view(pose)
 
-        mask = self.cnt.squeeze(-1) > 0
-        self.albedo[mask] = self.albedo[mask] / self.cnt[mask].repeat(1, 3)
+        self.dilate_texture()
 
-        ## dilate texture
-        mask = mask.view(h, w)
-        self.albedo = self.albedo.detach().cpu().numpy()
-        mask = mask.detach().cpu().numpy()
-
-        from sklearn.neighbors import NearestNeighbors
-        from scipy.ndimage import binary_dilation, binary_erosion
-
-        inpaint_region = binary_dilation(mask, iterations=64)
-        inpaint_region[mask] = 0
-
-        search_region = mask.copy()
-        not_search_region = binary_erosion(search_region, iterations=3)
-        search_region[not_search_region] = 0
-
-        search_coords = np.stack(np.nonzero(search_region), axis=-1)
-        inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
-
-        knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
-        _, indices = knn.kneighbors(inpaint_coords)
-
-        self.albedo[tuple(inpaint_coords.T)] = self.albedo[tuple(search_coords[indices[:, 0]].T)]
-
-        # overall deblur by LR then SR
-        # kiui.vis.plot_image(self.albedo)
-        self.albedo = (self.albedo * 255).astype(np.uint8)
-        self.albedo = cv2.resize(self.albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
-        self.albedo = kiui.sr.sr(self.albedo, scale=4)
-        self.albedo = self.albedo.astype(np.float32) / 255
-        # kiui.vis.plot_image(self.albedo)
-
-        self.albedo = torch.from_numpy(self.albedo).to(self.device)
-
-        # enhance quality by SD refine...
-        # kiui.vis.plot_image(albedo.detach().cpu().numpy())
-        # text_embeds = self.guidance_embeds if not self.opt.text_dir else self.guidance_embeds['default']
-        # albedo = self.guidance.refine(text_embeds, albedo.permute(2,0,1).unsqueeze(0).contiguous(), strength=0.8).squeeze(0).permute(1,2,0).contiguous()
-        # kiui.vis.plot_image(albedo.detach().cpu().numpy())
-
-        self.renderer.mesh.albedo = self.albedo
+        self.deblur()
 
         torch.cuda.synchronize()
         end_t = time.time()
@@ -562,11 +571,6 @@ class GUI:
                         self.initialize()
                         self.need_update = True
 
-                    def callback_generate(sender, app_data):
-                        # inpaint current view
-                        self.inpaint_view(self.cam.pose)
-                        self.need_update = True
-
                     dpg.add_button(
                         label="init",
                         tag="_button_init",
@@ -574,12 +578,39 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_init", theme_button)
 
+                    def callback_generate(sender, app_data):
+                        # inpaint current view
+                        self.inpaint_view(self.cam.pose)
+                        self.need_update = True
+
                     dpg.add_button(
                         label="gen",
                         tag="_button_gen",
                         callback=callback_generate,
                     )
                     dpg.bind_item_theme("_button_gen", theme_button)
+
+                    def callback_dilate(sender, app_data):
+                        self.dilate_texture()
+                        self.need_update = True
+
+                    dpg.add_button(
+                        label="dilate",
+                        tag="_button_dilate",
+                        callback=callback_dilate,
+                    )
+                    dpg.bind_item_theme("_button_dilate", theme_button)
+
+                    def callback_deblur(sender, app_data):
+                        self.deblur()
+                        self.need_update = True
+
+                    dpg.add_button(
+                        label="deblur",
+                        tag="_button_deblur",
+                        callback=callback_deblur,
+                    )
+                    dpg.bind_item_theme("_button_deblur", theme_button)
                 
                 # save current model
                 with dpg.group(horizontal=True):
