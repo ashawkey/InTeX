@@ -292,6 +292,9 @@ class Mesh:
             texture = np.ones((1024, 1024, 3), dtype=np.float32) * np.array([0.5, 0.5, 0.5])
             mesh.albedo = torch.tensor(texture, dtype=torch.float32, device=device)
             print(f"[load_trimesh] failed to load texture: {_mesh.visual.kind}.")
+        
+        if mesh.albedo.shape[-1] > 3:
+            mesh.albedo = mesh.albedo[..., :3].contiguous()
 
         vertices = _mesh.vertices
 

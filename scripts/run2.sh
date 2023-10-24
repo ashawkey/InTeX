@@ -10,4 +10,7 @@ python main.py --config configs/base.yaml mesh=data/compass.obj prompt="a compas
 python main.py --config configs/revani.yaml mesh=data/ambulance.obj prompt="an ambulance" save_path=ambulance.obj text_dir=True front_dir=-x
 python main.py --config configs/revani.yaml mesh=data3/bimba.obj prompt="a young girl" save_path=bimba.obj text_dir=True front_dir=+x
 
+python main.py --config configs/revani.yaml mesh=tmp_data/shiba.glb prompt="a shiba dog" save_path=shiba.obj text_dir=True front_dir=-y
+python main.py --config configs/revani.yaml mesh=tmp_data/vans_shoe.glb prompt="a cool shoe" save_path=shoe.obj text_dir=False front_dir=+z
+
 python main.py --config configs/base.yaml mesh=../gg3d/logs/csm_luigi.obj prompt="luigi" save_path=luigi.obj text_dir=True
