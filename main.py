@@ -380,7 +380,7 @@ class GUI:
 
         self.albedo = torch.zeros((h, w, 3), device=self.device, dtype=torch.float32)
         self.cnt = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
-        self.viewcos_cache = torch.zeros((h, w, 1), device=self.device, dtype=torch.float32)
+        self.viewcos_cache = - torch.ones((h, w, 1), device=self.device, dtype=torch.float32)
 
         # keep original texture if using ip2p
         if 'ip2p' in self.opt.control_mode:
@@ -702,15 +702,18 @@ class GUI:
                     
                     def callback_erase_mask(sender, app_data):
                         out = self.buffer_out
-                        proj_mask = (out['alpha'] > 0).view(-1).bool()
+                        h = w = int(self.opt.texture_size)
+
+                        proj_mask = (out['alpha'] > 0.1).view(-1).bool()
                         uvs = out['uvs'].view(-1, 2)[proj_mask]
                         mask_2d = torch.from_numpy(self.mask_2d).to(self.device).view(-1, 1)[proj_mask]
-                        h = w = int(self.opt.texture_size)
                         mask_2d = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, mask_2d, min_resolution=128)
                         
-                        mask = mask_2d.squeeze(-1) > 0
+                        # reset albedo and cnt
+                        mask = mask_2d.squeeze(-1) > 0.1
                         self.albedo[mask] = 0
                         self.cnt[mask] = 0
+                        self.renderer.mesh.viewcos_cache[mask] = -1
 
                         # update mesh texture for rendering
                         mask = self.cnt.squeeze(-1) > 0
@@ -718,7 +721,7 @@ class GUI:
                         cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
                         self.renderer.mesh.albedo = cur_albedo
                         
-                        # reset mask too
+                        # reset mask_2d too
                         self.mask_2d *= 0
                         self.need_update = True
                         self.need_update_overlay = True
