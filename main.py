@@ -594,6 +594,17 @@ class GUI:
                 with dpg.group(horizontal=True):
                     dpg.add_text("Generate: ")
 
+                    def callback_generate(sender, app_data):
+                        self.generate()
+                        self.need_update = True
+
+                    dpg.add_button(
+                        label="generate",
+                        tag="_button_generate",
+                        callback=callback_generate,
+                    )
+                    dpg.bind_item_theme("_button_generate", theme_button)
+
                     def callback_init(sender, app_data):
                         self.initialize()
                         self.need_update = True
@@ -605,17 +616,17 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_init", theme_button)
 
-                    def callback_generate(sender, app_data):
+                    def callback_inpaint(sender, app_data):
                         # inpaint current view
                         self.inpaint_view(self.cam.pose)
                         self.need_update = True
 
                     dpg.add_button(
-                        label="gen",
-                        tag="_button_gen",
-                        callback=callback_generate,
+                        label="inpaint",
+                        tag="_button_inpaint",
+                        callback=callback_inpaint,
                     )
-                    dpg.bind_item_theme("_button_gen", theme_button)
+                    dpg.bind_item_theme("_button_inpaint", theme_button)
 
                     def callback_dilate(sender, app_data):
                         self.dilate_texture()

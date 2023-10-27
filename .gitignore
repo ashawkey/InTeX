@@ -23,6 +23,8 @@ test.*
 data2
 data3
 data4
+data_*
 Cap3D_automated_Objaverse_no3Dword.csv
 
 test_inpaint.py
+videos
