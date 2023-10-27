@@ -74,7 +74,7 @@ class Renderer(nn.Module):
             path = objects[path]
             print(f'[INFO] load Objaverse from {path}')
 
-        self.mesh = Mesh.load(path, front_dir=self.opt.front_dir, retex=self.opt.retex, device=self.device)
+        self.mesh = Mesh.load(path, front_dir=self.opt.front_dir, retex=self.opt.retex, remesh=self.opt.remesh, device=self.device)
 
     @torch.no_grad()
     def export_mesh(self, path):

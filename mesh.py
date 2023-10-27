@@ -47,7 +47,7 @@ class Mesh:
         self.ori_scale = 1
 
     @classmethod
-    def load(cls, path=None, resize=True, renormal=True, retex=False, front_dir='+z', **kwargs):
+    def load(cls, path=None, remesh=False, resize=True, renormal=True, retex=False, front_dir='+z', **kwargs):
         # assume init with kwargs
         if path is None:
             mesh = cls(**kwargs)
@@ -59,6 +59,16 @@ class Mesh:
             mesh = cls.load_trimesh(path, **kwargs)
 
         print(f"[Mesh loading] v: {mesh.v.shape}, f: {mesh.f.shape}")
+
+        # remesh
+        if remesh:
+            from mesh_utils import clean_mesh
+            vertices = mesh.v.detach().cpu().numpy()
+            triangles = mesh.f.detach().cpu().numpy()
+            vertices, triangles = clean_mesh(vertices, triangles, remesh=True, remesh_size=0.01)
+            mesh.v = torch.from_numpy(vertices).float().to(mesh.device)
+            mesh.f = torch.from_numpy(triangles).int().to(mesh.device)
+
         # auto-normalize
         if resize:
             mesh.auto_size()

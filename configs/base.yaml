@@ -31,7 +31,7 @@ camera_path: default
 bg_image: None # assets/brick_wall.png
 
 ### generated texture image resolution
-texture_size: 2048
+texture_size: 1024
 
 ### camera rendering resolution (choose from [512, 1024, 2048, 4096], larger than 512 will incur Real-ESRGAN super-resolution)
 render_resolution: 1024
@@ -44,6 +44,7 @@ vis: false
 
 ### recalculate uv coordinate for mesh
 retex: false
+remesh: false
 
 ### gui resolution
 H: 800
