@@ -13,6 +13,7 @@ save_path: out.obj
 # model_key: runwayml/stable-diffusion-v1-5
 # model_key: xyn-ai/anything-v4.0
 model_key: philz1337/revanimated
+lora_keys: []
 
 ### additional positive/negative prompt
 posi_prompt: "masterpiece, high quality"

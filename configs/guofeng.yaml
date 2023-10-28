@@ -10,9 +10,8 @@ outdir: logs
 save_path: out.obj
 
 ### SD 1.5 checkpoint
-model_key: runwayml/stable-diffusion-v1-5
-# model_key: xyn-ai/anything-v4.0
-# model_key: philz1337/revanimated
+model_key: xiaolxl/GuoFeng3
+# lora_keys: [civitai_weights/MoXinV1.safetensors]
 lora_keys: []
 
 ### additional positive/negative prompt
@@ -23,10 +22,10 @@ nega_prompt: "bad quality, worst quality, shadows"
 control_mode: ['depth_inpaint']
 
 ### whether append 'front/side/back/top/bottom view' for the prompt, only use if the mesh's front dir is correctly set.
-text_dir: false
+text_dir: true
 
 ### camera path to generate the texture
-camera_path: default
+camera_path: front
 
 ### background image, default to white.
 bg_image: None # assets/brick_wall.png

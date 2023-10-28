@@ -90,7 +90,7 @@ class GUI:
         if self.guidance is None:
             print(f'[INFO] loading guidance model...')
             from guidance.sd_utils import StableDiffusion
-            self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key)
+            self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key, lora_keys=self.opt.lora_keys)
             print(f'[INFO] loaded guidance model!')
 
         print(f'[INFO] encoding prompt...')
@@ -351,14 +351,14 @@ class GUI:
         self.renderer.mesh.albedo = self.albedo
     
     @torch.no_grad()
-    def deblur(self):
+    def deblur(self, ratio=2):
         # overall deblur by LR then SR
         # kiui.vis.plot_image(self.albedo)
         h = w = int(self.opt.texture_size)
         self.albedo = self.albedo.detach().cpu().numpy()
         self.albedo = (self.albedo * 255).astype(np.uint8)
-        self.albedo = cv2.resize(self.albedo, (w // 4, h // 4), interpolation=cv2.INTER_CUBIC)
-        self.albedo = kiui.sr.sr(self.albedo, scale=4)
+        self.albedo = cv2.resize(self.albedo, (w // ratio, h // ratio), interpolation=cv2.INTER_CUBIC)
+        self.albedo = kiui.sr.sr(self.albedo, scale=ratio)
         self.albedo = self.albedo.astype(np.float32) / 255
         # kiui.vis.plot_image(self.albedo)
         self.albedo = torch.from_numpy(self.albedo).to(self.device)

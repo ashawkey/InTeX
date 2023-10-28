@@ -15,6 +15,7 @@ save_path: out.obj
 model_key: Linaqruf/anything-v3.0
 # model_key: sinkinai/GhostMix-V2-BakedVae
 # model_key: philz1337/revanimated
+lora_keys: []
 
 ### additional positive/negative prompt
 posi_prompt: "masterpiece, high quality"

@@ -1,11 +1,10 @@
-from transformers import CLIPTextModel, CLIPTokenizer, logging
+import os
+from transformers import logging
 from diffusers import (
     DDIMScheduler,
     StableDiffusionPipeline,
-    StableDiffusionControlNetPipeline,
     ControlNetModel,
     UniPCMultistepScheduler,
-    EulerAncestralDiscreteScheduler,
 )
 
 # suppress partial model loading warning
@@ -38,6 +37,7 @@ class StableDiffusion(nn.Module):
         vram_O=False,
         control_mode=["normal",],
         model_key="runwayml/stable-diffusion-v1-5",
+        lora_keys=[],
     ):
         super().__init__()
 
@@ -47,9 +47,19 @@ class StableDiffusion(nn.Module):
         self.control_mode = control_mode
 
         # Create model
-        pipe = StableDiffusionPipeline.from_pretrained(
-            model_key, torch_dtype=self.dtype
-        )
+        if os.path.exists(model_key):
+            # treat as local ckpt
+            pipe = StableDiffusionPipeline.from_single_file(model_key, torch_dtype=self.dtype)
+        else:
+            # huggingface ckpt
+            pipe = StableDiffusionPipeline.from_pretrained(model_key, torch_dtype=self.dtype)
+        
+        for lora_key in lora_keys:
+            # assume local folder/xxx.safetensors
+            assert os.path.exists(lora_key)
+            folder = os.path.dirname(lora_key)
+            name = os.path.basename(lora_key)
+            pipe.load_lora_weights(folder, weight_name=name)
 
         if vram_O:
             pipe.enable_sequential_cpu_offload()
