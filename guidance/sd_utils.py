@@ -94,6 +94,7 @@ class StableDiffusion(nn.Module):
                 self.controlnet_conditioning_scale['inpaint'] = 1.0
             if "depth_inpaint" in self.control_mode:
                 self.controlnet['depth_inpaint'] = ControlNetModel.from_pretrained("ashawkey/control_v11e_sd15_depth_aware_inpaint",torch_dtype=self.dtype).to(self.device)
+                # self.controlnet['depth_inpaint'] = ControlNetModel.from_pretrained("ashawkey/controlnet_depth_aware_inpaint_v11", torch_dtype=self.dtype).to(self.device)
                 self.controlnet_conditioning_scale['depth_inpaint'] = 1.0
             
         # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
