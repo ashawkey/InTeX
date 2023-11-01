@@ -18,6 +18,36 @@ from grid_put import mipmap_linear_grid_put_2d, linear_grid_put_2d, nearest_grid
 
 import kiui
 
+from sklearn.neighbors import NearestNeighbors
+from scipy.ndimage import binary_dilation, binary_erosion
+
+def dilate_image(image, mask, iterations):
+    # image: [H, W, C], current image
+    # mask: [H, W], region with content (~mask is the region to inpaint)
+    # iterations: int
+
+    if torch.is_tensor(mask):
+        mask = mask.detach().cpu().numpy()
+    
+    if mask.dtype != bool:
+        mask = mask > 0.5
+
+    inpaint_region = binary_dilation(mask, iterations=iterations)
+    inpaint_region[mask] = 0
+
+    search_region = mask.copy()
+    not_search_region = binary_erosion(search_region, iterations=3)
+    search_region[not_search_region] = 0
+
+    search_coords = np.stack(np.nonzero(search_region), axis=-1)
+    inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
+
+    knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
+    _, indices = knn.kneighbors(inpaint_coords)
+
+    image[tuple(inpaint_coords.T)] = image[tuple(search_coords[indices[:, 0]].T)]
+    return image
+
 
 class GUI:
     def __init__(self, opt):
@@ -198,18 +228,13 @@ class GUI:
             image_generate = F.interpolate(image_generate, size=(512, 512), mode='bilinear', align_corners=False)
             control_images['inpaint'] = image_generate
 
-            # image_refine = image.clone()
-            # image_refine[mask_refine.repeat(1, 3, 1, 1) > 0.5] = -1 # -1 is inpaint region
-            # control_images['inpaint_refine'] = image_refine
-
             # mask blending to avoid changing non-inpaint region (ref: https://github.com/lllyasviel/ControlNet-v1-1-nightly/commit/181e1514d10310a9d49bb9edb88dfd10bcc903b1)
             latents_mask = F.interpolate(mask_generate_blur, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            latents_mask_refine = F.interpolate(mask_refine, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
+            latents_mask_keep = F.interpolate(mask_keep, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
             control_images['latents_mask'] = latents_mask
-            # control_images['mask'] = mask_generate
-            # latents_mask_weight = F.interpolate(mask_weight, size=(64, 64), mode='bilinear') # [1, 1, 64, 64]
-            # control_images['latents_mask_weight'] = (latents_mask_weight > 0.8).float()
-
-            # kiui.vis.plot_matrix(control_images['latents_mask_weight'])
+            control_images['latents_mask_refine'] = latents_mask_refine
+            control_images['latents_mask_keep'] = latents_mask_keep
             control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
         
         # construct depth-aware-inpaint control
@@ -231,6 +256,10 @@ class GUI:
             control_images['latents_mask'] = latents_mask
             control_images['latents_mask_refine'] = latents_mask_refine
             control_images['latents_mask_keep'] = latents_mask_keep
+
+            # image_fill = image.clone()
+            # image_fill = dilate_image(image_fill, mask_generate_blur, iterations=int(H*0.2))
+
             control_images['latents_original'] = self.guidance.encode_imgs(F.interpolate(image, (512, 512), mode='bilinear', align_corners=False).to(self.guidance.dtype)) # [1, 4, 64, 64]
         
         
@@ -326,29 +355,13 @@ class GUI:
         ## dilate texture
         h = w = int(self.opt.texture_size)
         mask = mask.view(h, w)
-        self.albedo = self.albedo.detach().cpu().numpy()
         mask = mask.detach().cpu().numpy()
 
-        from sklearn.neighbors import NearestNeighbors
-        from scipy.ndimage import binary_dilation, binary_erosion
+        # self.albedo = self.albedo.detach().cpu().numpy()
+        self.albedo = dilate_image(self.albedo, mask, iterations=int(h*0.2))
+        # self.albedo = torch.from_numpy(self.albedo).to(self.device)
 
-        inpaint_region = binary_dilation(mask, iterations=int(h * 0.2))
-        inpaint_region[mask] = 0
-
-        search_region = mask.copy()
-        not_search_region = binary_erosion(search_region, iterations=3)
-        search_region[not_search_region] = 0
-
-        search_coords = np.stack(np.nonzero(search_region), axis=-1)
-        inpaint_coords = np.stack(np.nonzero(inpaint_region), axis=-1)
-
-        knn = NearestNeighbors(n_neighbors=1, algorithm="kd_tree").fit(search_coords)
-        _, indices = knn.kneighbors(inpaint_coords)
-
-        self.albedo[tuple(inpaint_coords.T)] = self.albedo[tuple(search_coords[indices[:, 0]].T)]
-
-        self.albedo = torch.from_numpy(self.albedo).to(self.device)
-        self.renderer.mesh.albedo = self.albedo
+        self.renderer.mesh.albedo = self.albedo.clone()
     
     @torch.no_grad()
     def deblur(self, ratio=2):
