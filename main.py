@@ -330,15 +330,14 @@ class GUI:
         # albedo[mask] += cur_albedo[mask]
         # cnt[mask] += cur_cnt[mask]
 
+        self.backup()
+
         mask = cur_cnt.squeeze(-1) > 0
         self.albedo[mask] += cur_albedo[mask]
         self.cnt[mask] += cur_cnt[mask]
 
         # update mesh texture for rendering
-        mask = self.cnt.squeeze(-1) > 0
-        cur_albedo = self.albedo.clone()
-        cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
-        self.renderer.mesh.albedo = cur_albedo
+        self.update_mesh_albedo()
 
         # kiui.vis.plot_image(cur_albedo.detach().cpu().numpy())
 
@@ -346,35 +345,60 @@ class GUI:
         viewcos = viewcos.view(-1, 1)[proj_mask]
         cur_viewcos = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, viewcos, min_resolution=256)
         self.renderer.mesh.viewcos_cache = torch.maximum(self.renderer.mesh.viewcos_cache, cur_viewcos)
+    
+    @torch.no_grad()
+    def backup(self):
+        self.backup_albedo = self.albedo.clone()
+        self.backup_cnt = self.cnt.clone()
+        self.backup_viewcos_cache = self.renderer.mesh.viewcos_cache.clone()
+    
+    @torch.no_grad()
+    def restore(self):
+        self.albedo = self.backup_albedo.clone()
+        self.cnt = self.backup_cnt.clone()
+        self.renderer.mesh.cnt = self.cnt
+        self.renderer.mesh.viewcos_cache = self.backup_viewcos_cache.clone()
+        self.update_mesh_albedo()
+    
+    @torch.no_grad()
+    def update_mesh_albedo(self):
+        mask = self.cnt.squeeze(-1) > 0
+        cur_albedo = self.albedo.clone()
+        cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
+        self.renderer.mesh.albedo = cur_albedo
 
     @torch.no_grad()
     def dilate_texture(self):
-        mask = self.cnt.squeeze(-1) > 0
-        self.albedo[mask] = self.albedo[mask] / self.cnt[mask].repeat(1, 3)
-
-        ## dilate texture
         h = w = int(self.opt.texture_size)
+
+        self.backup()
+
+        mask = self.cnt.squeeze(-1) > 0
+        
+        ## dilate texture
         mask = mask.view(h, w)
         mask = mask.detach().cpu().numpy()
 
-        # self.albedo = self.albedo.detach().cpu().numpy()
         self.albedo = dilate_image(self.albedo, mask, iterations=int(h*0.2))
-        # self.albedo = torch.from_numpy(self.albedo).to(self.device)
-
-        self.renderer.mesh.albedo = self.albedo.clone()
+        self.cnt = dilate_image(self.cnt, mask, iterations=int(h*0.2))
+        
+        self.update_mesh_albedo()
     
     @torch.no_grad()
     def deblur(self, ratio=2):
+        h = w = int(self.opt.texture_size)
+
+        self.backup()
+
         # overall deblur by LR then SR
         # kiui.vis.plot_image(self.albedo)
-        h = w = int(self.opt.texture_size)
-        self.albedo = self.albedo.detach().cpu().numpy()
-        self.albedo = (self.albedo * 255).astype(np.uint8)
-        self.albedo = cv2.resize(self.albedo, (w // ratio, h // ratio), interpolation=cv2.INTER_CUBIC)
-        self.albedo = kiui.sr.sr(self.albedo, scale=ratio)
-        self.albedo = self.albedo.astype(np.float32) / 255
-        # kiui.vis.plot_image(self.albedo)
-        self.albedo = torch.from_numpy(self.albedo).to(self.device)
+        cur_albedo = self.renderer.mesh.albedo.detach().cpu().numpy()
+        cur_albedo = (cur_albedo * 255).astype(np.uint8)
+        cur_albedo = cv2.resize(cur_albedo, (w // ratio, h // ratio), interpolation=cv2.INTER_CUBIC)
+        cur_albedo = kiui.sr.sr(cur_albedo, scale=ratio)
+        cur_albedo = cur_albedo.astype(np.float32) / 255
+        # kiui.vis.plot_image(cur_albedo)
+        cur_albedo = torch.from_numpy(cur_albedo).to(self.device)
 
         # enhance quality by SD refine...
         # kiui.vis.plot_image(albedo.detach().cpu().numpy())
@@ -382,7 +406,7 @@ class GUI:
         # albedo = self.guidance.refine(text_embeds, albedo.permute(2,0,1).unsqueeze(0).contiguous(), strength=0.8).squeeze(0).permute(1,2,0).contiguous()
         # kiui.vis.plot_image(albedo.detach().cpu().numpy())
 
-        self.renderer.mesh.albedo = self.albedo
+        self.renderer.mesh.albedo = cur_albedo
 
     @torch.no_grad()
     def initialize(self):
@@ -398,6 +422,7 @@ class GUI:
         # keep original texture if using ip2p
         if 'ip2p' in self.opt.control_mode:
             self.renderer.mesh.ori_albedo = self.renderer.mesh.albedo.clone()
+
         # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
         self.renderer.mesh.albedo = self.albedo
         self.renderer.mesh.cnt = self.cnt 
@@ -641,6 +666,21 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_inpaint", theme_button)
 
+                    def callback_undo(sender, app_data):
+                        # inpaint current view
+                        self.restore()
+                        self.need_update = True
+
+                    dpg.add_button(
+                        label="undo",
+                        tag="_button_undo",
+                        callback=callback_undo,
+                    )
+                    dpg.bind_item_theme("_button_undo", theme_button)
+
+                with dpg.group(horizontal=True):
+                    dpg.add_text("Post-process: ")
+
                     def callback_dilate(sender, app_data):
                         self.dilate_texture()
                         self.need_update = True
@@ -663,6 +703,7 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_deblur", theme_button)
                 
+            
                 # save current model
                 with dpg.group(horizontal=True):
                     dpg.add_text("Save: ")
@@ -730,20 +771,22 @@ class GUI:
 
                         proj_mask = (out['alpha'] > 0.1).view(-1).bool()
                         uvs = out['uvs'].view(-1, 2)[proj_mask]
-                        mask_2d = torch.from_numpy(self.mask_2d).to(self.device).view(-1, 1)[proj_mask]
-                        mask_2d = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, mask_2d, min_resolution=128)
+                        mask_2d = torch.from_numpy(self.mask_2d).to(self.device).permute(2, 0, 1).contiguous()
+                        mask_2d = F.interpolate(mask_2d.unsqueeze(0), size=out['alpha'].shape[:2], mode='nearest').squeeze(0)
+                        mask_2d = mask_2d.view(-1, 1)[proj_mask]
+                        # mask_2d = mipmap_linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, mask_2d, min_resolution=128)
+                        mask_2d = linear_grid_put_2d(h, w, uvs[..., [1, 0]] * 2 - 1, mask_2d)
                         
                         # reset albedo and cnt
+                        self.backup()
+                        
                         mask = mask_2d.squeeze(-1) > 0.1
                         self.albedo[mask] = 0
                         self.cnt[mask] = 0
                         self.renderer.mesh.viewcos_cache[mask] = -1
 
                         # update mesh texture for rendering
-                        mask = self.cnt.squeeze(-1) > 0
-                        cur_albedo = self.albedo.clone()
-                        cur_albedo[mask] /= self.cnt[mask].repeat(1, 3)
-                        self.renderer.mesh.albedo = cur_albedo
+                        self.update_mesh_albedo()
                         
                         # reset mask_2d too
                         self.mask_2d *= 0
@@ -846,7 +889,7 @@ class GUI:
             dpg.add_mouse_move_handler(callback=callback_set_mouse_loc)
 
         dpg.create_viewport(
-            title="Gaussian3D",
+            title="InteX",
             width=self.W + 600,
             height=self.H + (45 if os.name == "nt" else 0),
             resizable=False,
