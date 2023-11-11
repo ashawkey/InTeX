@@ -277,7 +277,7 @@ class GUI:
             text_embeds = self.guidance_embeds[d]
 
         # prompt to reject & regenerate
-        rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images).float()
+        rgbs = self.guidance(text_embeds, height=512, width=512, control_images=control_images, refine_strength=self.opt.refine_strength).float()
 
         # performing upscaling (assume 2/4/8x)
         if rgbs.shape[-1] != W or rgbs.shape[-2] != H:
@@ -290,6 +290,7 @@ class GUI:
         
         # apply mask to make sure non-inpaint region is not changed
         rgbs = rgbs * (1 - mask_keep) + image * mask_keep
+        # rgbs = rgbs * mask_generate_blur + image * (1 - mask_generate_blur)
 
         if self.opt.vis:
             if 'depth' in control_images:
@@ -310,7 +311,7 @@ class GUI:
         # grid put
 
         # project-texture mask
-        proj_mask = (out['alpha'] > 0) & (out['viewcos'] > 0.5)  # [H, W, 1]
+        proj_mask = (out['alpha'] > 0) & (out['viewcos'] > self.opt.cos_thresh)  # [H, W, 1]
         # kiui.vis.plot_image(out['viewcos'].squeeze(-1).detach().cpu().numpy())
         proj_mask = _zoom(proj_mask.view(1, 1, H, W).float(), 'nearest').view(-1).bool()
         uvs = _zoom(out['uvs'].permute(2, 0, 1).unsqueeze(0).contiguous(), 'nearest')
@@ -464,8 +465,11 @@ class GUI:
             pose = orbit_camera(ver, hor, self.cam.radius)
             self.inpaint_view(pose)
 
-        self.dilate_texture()
+            # preview
+            self.need_update = True
+            self.test_step()
 
+        self.dilate_texture()
         self.deblur()
 
         torch.cuda.synchronize()
@@ -492,7 +496,7 @@ class GUI:
 
             buffer_image = out[self.mode]  # [H, W, 3]
 
-            if self.mode in ['depth', 'alpha', 'viewcos']:
+            if self.mode in ['depth', 'alpha', 'viewcos', 'viewcos_cache', 'cnt']:
                 buffer_image = buffer_image.repeat(1, 1, 3)
                 if self.mode == 'depth':
                     buffer_image = (buffer_image - buffer_image.min()) / (buffer_image.max() - buffer_image.min() + 1e-20)
@@ -637,7 +641,7 @@ class GUI:
                         self.need_update = True
 
                     dpg.add_button(
-                        label="generate",
+                        label="auto",
                         tag="_button_generate",
                         callback=callback_generate,
                     )
@@ -733,7 +737,7 @@ class GUI:
                     self.need_update = True
 
                 dpg.add_combo(
-                    ("image", "depth", "alpha", "normal", "rot_normal", "viewcos"),
+                    ("image", "depth", "alpha", "normal", "rot_normal", "viewcos", "viewcos_cache", "cnt"),
                     label="mode",
                     default_value=self.mode,
                     callback=callback_change_mode,

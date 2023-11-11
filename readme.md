@@ -44,7 +44,7 @@ Tips:
 python main.py --config configs/base.yaml mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt="a photo of game controller" save_path=controller.obj
 
 # just visualize the downloaded model with original texture
-python main.py --config mesh='u3WYrMucGzUOhnNukx2EfyQqevA' prompt='xxx' gui=True
+python main.py --config configs/base.yaml mesh='4c865c5df17741f7be87392d37fa31eb' prompt='xxx' gui=True
 
 ### interactive tools
 # visualize intermediate results

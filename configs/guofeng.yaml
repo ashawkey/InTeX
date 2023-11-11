@@ -15,8 +15,8 @@ model_key: xiaolxl/GuoFeng3
 lora_keys: []
 
 ### additional positive/negative prompt
-posi_prompt: "masterpiece, high quality"
-nega_prompt: "bad quality, worst quality, shadows"
+posi_prompt: "best quality, masterpiece, highres, china dress, Beautiful face"
+nega_prompt: "NSFW, lowres,bad anatomy,bad hands, text, error, missing fingers,extra digit, fewer digits, cropped, worstquality, low quality, normal quality,jpegartifacts,signature, watermark, username,blurry,bad feet"
 
 ### controlnet model
 control_mode: ['depth_inpaint']
@@ -35,6 +35,12 @@ texture_size: 1024
 
 ### camera rendering resolution (choose from [512, 1024, 2048, 4096], larger than 512 will incur Real-ESRGAN super-resolution)
 render_resolution: 1024
+
+### threshold for view cosine value
+cos_thresh: 0
+
+### refine strength (larger value means less strong refinement)
+refine_strength: 0.6
 
 ### open a gui for visualization (need a screen)
 gui: false

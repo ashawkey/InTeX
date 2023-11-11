@@ -142,6 +142,7 @@ class StableDiffusion(nn.Module):
         control_images=None,
         latents=None,
         strength=0,
+        refine_strength=0.8,
     ):
 
         text_embeddings = text_embeddings.to(self.dtype)
@@ -163,7 +164,7 @@ class StableDiffusion(nn.Module):
         for i, t in enumerate(self.scheduler.timesteps[init_step:]):
             # inpaint mask blend
             if 'latents_mask' in control_images:
-                if i < num_inference_steps * 0.9:
+                if i < num_inference_steps * refine_strength:
                     # fix keep + refine at early steps
                     mask_keep = 1 - control_images['latents_mask']
                 else:
