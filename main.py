@@ -59,6 +59,7 @@ class GUI:
 
         self.mode = "image"
         self.seed = opt.seed
+        self.save_path = opt.save_path
 
         self.buffer_image = np.ones((self.W, self.H, 3), dtype=np.float32)
         self.buffer_overlay = np.zeros((self.W, self.H, 3), dtype=np.float32)
@@ -515,7 +516,7 @@ class GUI:
             buffer_overlay = np.zeros_like(self.buffer_overlay)
 
             # draw mask 2d
-            buffer_overlay += self.mask_2d * 0.2
+            buffer_overlay += self.mask_2d * 0.5
             
             self.buffer_overlay = buffer_overlay
             self.need_update_overlay = False
@@ -540,7 +541,7 @@ class GUI:
     def save_model(self):
         os.makedirs(self.opt.outdir, exist_ok=True)
     
-        path = os.path.join(self.opt.outdir, self.opt.save_path)
+        path = os.path.join(self.opt.outdir, self.save_path)
         self.renderer.export_mesh(path)
 
         print(f"[INFO] save model to {path}.")

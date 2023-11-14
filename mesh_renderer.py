@@ -58,6 +58,7 @@ class Renderer(nn.Module):
         else:
             # default as blender grey
             self.bg = 0.807 * torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
+            # self.bg = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
         self.bg_normal = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
 
         if not self.opt.gui or os.name == 'nt':
