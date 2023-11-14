@@ -57,8 +57,8 @@ class Renderer(nn.Module):
             self.bg = F.interpolate(bg_image.permute(2, 0, 1).unsqueeze(0), (opt.render_resolution, opt.render_resolution), mode='bilinear', align_corners=False)[0].permute(1, 2, 0).contiguous()
         else:
             # default as blender grey
-            self.bg = 0.807 * torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
-            # self.bg = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
+            # self.bg = 0.807 * torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
+            self.bg = torch.tensor([1, 1, 1], dtype=torch.float32, device=self.device)
         self.bg_normal = torch.tensor([0, 0, 1], dtype=torch.float32, device=self.device)
 
         if not self.opt.gui or os.name == 'nt':
@@ -118,7 +118,7 @@ class Renderer(nn.Module):
         rot_normal = normal @ pose[:3, :3]
 
         # rot normal z axis is exactly viewdir-normal cosine
-        viewcos = rot_normal[..., [2]]
+        viewcos = rot_normal[..., [2]].abs() # double-sided
 
         # antialias
         albedo = dr.antialias(albedo, rast, v_clip, self.mesh.f).squeeze(0).clamp(0, 1) # [H, W, 3]

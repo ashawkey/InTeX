@@ -65,7 +65,7 @@ class Mesh:
             from mesh_utils import clean_mesh
             vertices = mesh.v.detach().cpu().numpy()
             triangles = mesh.f.detach().cpu().numpy()
-            vertices, triangles = clean_mesh(vertices, triangles, remesh=True, remesh_size=0.01)
+            vertices, triangles = clean_mesh(vertices, triangles, remesh=False, remesh_size=0.01, repair=True)
             mesh.v = torch.from_numpy(vertices).float().to(mesh.device)
             mesh.f = torch.from_numpy(triangles).int().to(mesh.device)
 
