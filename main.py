@@ -659,6 +659,16 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_init", theme_button)
 
+                    def callback_encode(sender, app_data):
+                        self.prepare_guidance()
+
+                    dpg.add_button(
+                        label="encode",
+                        tag="_button_encode",
+                        callback=callback_encode,
+                    )
+                    dpg.bind_item_theme("_button_encode", theme_button)
+
                     def callback_inpaint(sender, app_data):
                         # inpaint current view
                         self.inpaint_view(self.cam.pose)
