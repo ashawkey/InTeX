@@ -604,7 +604,7 @@ class GUI:
                 setattr(self, user_data, app_data)
 
             # init stuff
-            with dpg.collapsing_header(label="Initialize", default_open=True):
+            with dpg.collapsing_header(label="Inpaint", default_open=True):
 
                 # seed stuff
                 def callback_set_seed(sender, app_data):
@@ -727,7 +727,7 @@ class GUI:
                         self.save_model()
 
                     dpg.add_button(
-                        label="model",
+                        label="mesh",
                         tag="_button_save_model",
                         callback=callback_save_model,
                     )
@@ -740,36 +740,9 @@ class GUI:
                         user_data="save_path",
                     )
 
-            # rendering options
-            with dpg.collapsing_header(label="Rendering", default_open=True):
-                # mode combo
-                def callback_change_mode(sender, app_data):
-                    self.mode = app_data
-                    self.need_update = True
-
-                dpg.add_combo(
-                    ("image", "depth", "alpha", "normal", "rot_normal", "viewcos", "viewcos_cache", "cnt"),
-                    label="mode",
-                    default_value=self.mode,
-                    callback=callback_change_mode,
-                )
-
-                # fov slider
-                def callback_set_fovy(sender, app_data):
-                    self.cam.fovy = np.deg2rad(app_data)
-                    self.need_update = True
-
-                dpg.add_slider_int(
-                    label="FoV (vertical)",
-                    min_value=1,
-                    max_value=120,
-                    format="%d deg",
-                    default_value=np.rad2deg(self.cam.fovy),
-                    callback=callback_set_fovy,
-                )
             
             # draw mask 
-            with dpg.collapsing_header(label="Draw", default_open=True):
+            with dpg.collapsing_header(label="Repaint", default_open=True):
                 with dpg.group(horizontal=True):
 
                     def callback_toggle_draw_mask(sender, app_data):
@@ -838,6 +811,33 @@ class GUI:
                     user_data="draw_radius",
                 )
 
+            # rendering options
+            with dpg.collapsing_header(label="Render", default_open=True):
+                # mode combo
+                def callback_change_mode(sender, app_data):
+                    self.mode = app_data
+                    self.need_update = True
+
+                dpg.add_combo(
+                    ("image", "depth", "alpha", "normal", "rot_normal", "viewcos", "viewcos_cache", "cnt"),
+                    label="mode",
+                    default_value=self.mode,
+                    callback=callback_change_mode,
+                )
+
+                # fov slider
+                def callback_set_fovy(sender, app_data):
+                    self.cam.fovy = np.deg2rad(app_data)
+                    self.need_update = True
+
+                dpg.add_slider_int(
+                    label="FoV (vertical)",
+                    min_value=1,
+                    max_value=120,
+                    format="%d deg",
+                    default_value=np.rad2deg(self.cam.fovy),
+                    callback=callback_set_fovy,
+                )
 
 
         ### register camera handler
