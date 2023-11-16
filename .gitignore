@@ -16,7 +16,7 @@ tets/256_tets.npz
 tmp_*
 model_cache
 point_e_model_cache
-logs
+logs*
 test.*
 *.mp4
 
@@ -27,4 +27,7 @@ data_*
 Cap3D_automated_Objaverse_no3Dword.csv
 
 test_inpaint.py
-videos
+videos*
+civitai_weights
+logs_*
+*.ttf
