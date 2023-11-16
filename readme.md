@@ -1,13 +1,8 @@
-# Tetere
+# InteX
 
-Tetere is a TExt-to-TExtuRE tool.
+This repository contains the official implementation for [InteX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting](TODO).
 
-https://github.com/ashawkey/tetere_private/assets/25863658/5774f660-1839-488b-9967-40996490aad4
-
-### Features
-* Fast Text-to-Texture in less than one minute.
-* Use a custom ControlNet v1.1 depth-aware inpainting model to generate consistent and depth-aligned texture.
-* Support custom SD checkpoints (need to be converted to diffuser format)
+![teaser](assets/teaser.jpg)
 
 ### Install
 ```bash
@@ -23,8 +18,8 @@ pip install git+https://github.com/NVlabs/nvdiffrast/
 # please check ./configs/revani.yaml for each parameter's meaning
 python main.py --config configs/revani.yaml mesh=data/dragon.glb prompt="a red pet dragon with fire patterns" save_path=dragon_fire.glb text_dir=True
 
-### visualize generated mesh
-python -m kiui.render ./logs/dragon_fire.glb
+### visualize generated mesh (requires to install kiui)
+kire ./logs/dragon_fire.glb
 
 ### web gui (gradio)
 python app.py
