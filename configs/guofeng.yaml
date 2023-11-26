@@ -13,6 +13,7 @@ save_path: out.obj
 model_key: xiaolxl/GuoFeng3
 # lora_keys: [civitai_weights/MoXinV1.safetensors]
 lora_keys: []
+enable_lcm: False
 
 ### additional positive/negative prompt
 posi_prompt: "best quality, masterpiece, highres, china dress, Beautiful face"

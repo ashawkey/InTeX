@@ -78,6 +78,10 @@ class Mesh:
             print(f"[Mesh loading] vn: {mesh.vn.shape}, fn: {mesh.fn.shape}")
         # auto-fix texcoords
         if retex or (mesh.albedo is not None and mesh.vt is None):
+            # reset texture
+            if retex:
+                texture = np.ones((1024, 1024, 3), dtype=np.float32) * np.array([0.5, 0.5, 0.5])
+                mesh.albedo = torch.tensor(texture, dtype=torch.float32, device=mesh.device)
             mesh.auto_uv(cache_path=path)
             print(f"[Mesh loading] vt: {mesh.vt.shape}, ft: {mesh.ft.shape}")
 

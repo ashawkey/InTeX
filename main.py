@@ -120,7 +120,10 @@ class GUI:
         
         if self.guidance is None:
             print(f'[INFO] loading guidance model...')
-            from guidance.sd_utils import StableDiffusion
+            if self.opt.enable_lcm:
+                from guidance.sd_lcm_utils import StableDiffusion
+            else:
+                from guidance.sd_utils import StableDiffusion
             self.guidance = StableDiffusion(self.device, control_mode=self.opt.control_mode, model_key=self.opt.model_key, lora_keys=self.opt.lora_keys)
             print(f'[INFO] loaded guidance model!')
 

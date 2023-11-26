@@ -2,6 +2,7 @@ import os
 from transformers import logging
 from diffusers import (
     DDIMScheduler,
+    LCMScheduler,
     StableDiffusionPipeline,
     ControlNetModel,
     UniPCMultistepScheduler,
@@ -69,6 +70,9 @@ class StableDiffusion(nn.Module):
             # pipe.enable_model_cpu_offload()
         else:
             pipe.to(device)
+        
+        pipe.load_lora_weights("latent-consistency/lcm-lora-sdv1-5")
+        pipe.fuse_lora()
 
         self.vae = pipe.vae
         self.tokenizer = pipe.tokenizer
@@ -98,7 +102,8 @@ class StableDiffusion(nn.Module):
                 self.controlnet_conditioning_scale['depth_inpaint'] = 1.0
             
         # self.scheduler = DDIMScheduler.from_pretrained(model_key, subfolder="scheduler", torch_dtype=self.dtype)
-        self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+        # self.scheduler = UniPCMultistepScheduler.from_config(pipe.scheduler.config)
+        self.scheduler = LCMScheduler.from_config(pipe.scheduler.config)
 
         del pipe
 
@@ -136,8 +141,8 @@ class StableDiffusion(nn.Module):
         text_embeddings,
         height=512,
         width=512,
-        num_inference_steps=20,
-        guidance_scale=7.5,
+        num_inference_steps=4,
+        guidance_scale=2.0,
         guidance_rescale=0,
         control_images=None,
         latents=None,
@@ -163,8 +168,6 @@ class StableDiffusion(nn.Module):
 
         for i, t in enumerate(self.scheduler.timesteps[init_step:]):
             
-            t = torch.tensor([t], dtype=self.dtype, device=self.device)
-
             # inpaint mask blend
             if 'latents_mask' in control_images:
                 if i < num_inference_steps * refine_strength:
