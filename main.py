@@ -414,7 +414,7 @@ class GUI:
         self.renderer.mesh.albedo = cur_albedo
 
     @torch.no_grad()
-    def initialize(self):
+    def initialize(self, keep_ori_albedo=False):
 
         self.prepare_guidance()
         
@@ -428,7 +428,11 @@ class GUI:
         if 'ip2p' in self.opt.control_mode:
             self.renderer.mesh.ori_albedo = self.renderer.mesh.albedo.clone()
 
-        # init empty texture, and also patch texture-cnt to mesh for rendering inpaint mask
+        if keep_ori_albedo:
+            self.albedo = self.renderer.mesh.albedo.clone()
+            self.cnt += 1 # set to 1
+            self.viewcos_cache *= -1 # set to 1
+        
         self.renderer.mesh.albedo = self.albedo
         self.renderer.mesh.cnt = self.cnt 
         self.renderer.mesh.viewcos_cache = self.viewcos_cache
@@ -437,7 +441,7 @@ class GUI:
     @torch.no_grad()
     def generate(self):
 
-        self.initialize()
+        self.initialize(keep_ori_albedo=True)
 
         # vers = [0,]
         # hors = [0,]
@@ -651,16 +655,25 @@ class GUI:
                     )
                     dpg.bind_item_theme("_button_generate", theme_button)
 
-                    def callback_init(sender, app_data):
-                        self.initialize()
+                    def callback_init(sender, app_data, user_data):
+                        self.initialize(keep_ori_albedo=user_data)
                         self.need_update = True
 
                     dpg.add_button(
                         label="init",
                         tag="_button_init",
                         callback=callback_init,
+                        user_data=False,
                     )
                     dpg.bind_item_theme("_button_init", theme_button)
+
+                    dpg.add_button(
+                        label="init_ori",
+                        tag="_button_init_ori",
+                        callback=callback_init,
+                        user_data=True,
+                    )
+                    dpg.bind_item_theme("_button_init_ori", theme_button)
 
                     def callback_encode(sender, app_data):
                         self.prepare_guidance()
