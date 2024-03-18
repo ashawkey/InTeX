@@ -1,6 +1,8 @@
 # InteX
 
-This repository contains the official implementation for [InteX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting](TODO).
+This repository contains the official implementation for *InteX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting*.
+
+### [Project Page](https://me.kiui.moe/intex/) | [Arxiv](https://arxiv.org/abs/TODO)
 
 ![teaser](assets/teaser.jpg)
 
@@ -27,5 +29,20 @@ python app.py
 
 Please check `./scripts` for more examples.
 
-Tips:
-* support loading/saving `obj, ply, glb` formated meshes.
+### Acknowledgement
+
+This work is built on many amazing research works and open-source projects, thanks a lot to all the authors for sharing!
+
+- [nvdiffrast](https://github.com/NVlabs/nvdiffrast)
+- [dearpygui](https://github.com/hoffstadt/DearPyGui)
+
+### Citation
+
+```
+@article{tang2024intex,
+  title={InTeX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting},
+  author={Tang, Jiaxiang and Lu, Ruijie and Chen, Xiaokang and Wen, Xiang and Zeng, Gang and Liu, Ziwei},
+  journal={arXiv preprint arXiv:TODO},
+  year={2024}
+}
+```
