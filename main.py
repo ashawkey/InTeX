@@ -441,7 +441,7 @@ class GUI:
     @torch.no_grad()
     def generate(self):
 
-        self.initialize(keep_ori_albedo=True)
+        self.initialize(keep_ori_albedo=False)
 
         # vers = [0,]
         # hors = [0,]
