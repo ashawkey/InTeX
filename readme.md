@@ -2,7 +2,7 @@
 
 This repository contains the official implementation for *InteX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting*.
 
-### [Project Page](https://me.kiui.moe/intex/) | [Arxiv](https://arxiv.org/abs/TODO)
+### [Project Page](https://me.kiui.moe/intex/) | [Arxiv](https://arxiv.org/abs/2403.11878)
 
 ![teaser](assets/teaser.jpg)
 
@@ -42,7 +42,7 @@ This work is built on many amazing research works and open-source projects, than
 @article{tang2024intex,
   title={InTeX: Interactive Text-to-Texture Synthesis via Unified Depth-aware Inpainting},
   author={Tang, Jiaxiang and Lu, Ruijie and Chen, Xiaokang and Wen, Xiang and Zeng, Gang and Liu, Ziwei},
-  journal={arXiv preprint arXiv:TODO},
+  journal={arXiv preprint arXiv:2403.11878},
   year={2024}
 }
 ```
